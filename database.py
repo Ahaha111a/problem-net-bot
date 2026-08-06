@@ -20,6 +20,7 @@ connection.commit()
 
 
 def save_story(user_id: int, text: str):
+    print("💾 История сохранена в базе")
 
     cursor.execute(
         """
