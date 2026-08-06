@@ -4,6 +4,7 @@ from aiogram.fsm.context import FSMContext
 
 from states import StoryState
 from config import ADMIN_ID
+from database import save_story
 
 
 router = Router()
@@ -24,6 +25,10 @@ async def start_story(message: Message, state: FSMContext):
 async def receive_story(message: Message, state: FSMContext):
 
     story = message.text
+    save_story(
+        message.from_user.id,
+        story
+    )
 
     await message.bot.send_message(
         ADMIN_ID,
