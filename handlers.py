@@ -28,24 +28,24 @@ async def receive_story(message: Message, state: FSMContext):
     story = message.text
 
     story_id = save_story(
-    message.from_user.id,
-    story
-)
+        message.from_user.id,
+        story
+    )
 
-await message.answer(
-    "🤖 Анализирую вашу историю..."
-)
+    await message.answer(
+        "🤖 Анализирую вашу историю..."
+    )
 
-ai_result = await analyze_story(story)
+    ai_result = await analyze_story(story)
 
     await message.bot.send_message(
-    ADMIN_ID,
-    f"📥 <b>Новая история #{story_id}</b>\n\n"
-    f"👤 Пользователь: {message.from_user.id}\n\n"
-    f"💭 Текст:\n{story}\n\n"
-    f"🤖 <b>Анализ ИИ:</b>\n\n"
-    f"{ai_result}"
-)
+        ADMIN_ID,
+        f"📥 <b>Новая история #{story_id}</b>\n\n"
+        f"👤 Пользователь: {message.from_user.id}\n\n"
+        f"💭 Текст:\n{story}\n\n"
+        f"🤖 <b>Анализ ИИ:</b>\n\n"
+        f"{ai_result}"
+    )
 
     await message.answer(
         "💙 Спасибо, что поделились.\n\n"
