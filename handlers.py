@@ -15,6 +15,7 @@ router = Router()
 
 @router.message(F.text == "📝 Поделиться историей")
 async def start_story(message: Message, state: FSMContext):
+
     await state.set_state(StoryState.waiting_for_story)
 
     await message.answer(
@@ -39,42 +40,41 @@ async def receive_story(message: Message, state: FSMContext):
     )
 
     try:
-    print("Запускаю анализ истории")
+        print("Запускаю анализ истории")
 
-    ai_result = await analyze_story(story)
+        ai_result = await analyze_story(story)
 
-    print("Анализ готов")
+        print("Анализ готов")
 
-    post_text = await create_post(story)
+        post_text = await create_post(story)
 
-    print("Пост готов")
-
-except Exception as e:
-    ai_result = f"Ошибка ИИ: {e}"
-    post_text = "Не удалось создать пост"
-    print(f"Ошибка ИИ: {e}")
+        print("Пост готов")
 
     except Exception as e:
+
         ai_result = f"Ошибка ИИ: {e}"
         post_text = "Не удалось создать пост"
+
         print(f"Ошибка ИИ: {e}")
 
+
     await message.bot.send_message(
-    ADMIN_ID,
-    f"📥 <b>Новая история #{story_id}</b>\n\n"
-    f"👤 Пользователь: {message.from_user.id}\n\n"
-    f"💭 Текст:\n{story}\n\n"
-    f"🤖 <b>Анализ ИИ:</b>\n\n"
-    f"{ai_result}\n\n"
-    f"━━━━━━━━━━━━━━\n\n"
-    f"📌 <b>Готовый пост:</b>\n\n"
-    f"{post_text}",
-    reply_markup=moderation_keyboard()
-)
+        ADMIN_ID,
+        f"📥 <b>Новая история #{story_id}</b>\n\n"
+        f"👤 Пользователь: {message.from_user.id}\n\n"
+        f"💭 <b>Текст:</b>\n{story}\n\n"
+        f"🤖 <b>Анализ ИИ:</b>\n\n"
+        f"{ai_result}\n\n"
+        f"━━━━━━━━━━━━━━\n\n"
+        f"📌 <b>Готовый пост:</b>\n\n"
+        f"{post_text}",
+        reply_markup=moderation_keyboard()
+    )
+
 
     await message.answer(
         "💙 Спасибо, что поделились.\n\n"
         "Ваша история отправлена на рассмотрение."
     )
 
-    await state.clear()
+    await state.clear()2
