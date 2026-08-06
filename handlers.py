@@ -25,18 +25,18 @@ async def start_story(message: Message, state: FSMContext):
 async def receive_story(message: Message, state: FSMContext):
 
     story = message.text
-    
+
     story_id = save_story(
         message.from_user.id,
         story
     )
-await message.bot.send_message(
-    ADMIN_ID,
-    f"📥 <b>Новая история #{story_id}</b>\n\n"
-    f"👤 Пользователь: {message.from_user.id}\n\n"
-    f"💭 Текст:\n{story}"
-)
-    
+
+    await message.bot.send_message(
+        ADMIN_ID,
+        f"📥 <b>Новая история #{story_id}</b>\n\n"
+        f"👤 Пользователь: {message.from_user.id}\n\n"
+        f"💭 Текст:\n{story}"
+    )
 
     await message.answer(
         "💙 Спасибо, что поделились.\n\n"
