@@ -48,4 +48,4 @@ def moderation_keyboard():
         ]
     )
 
-    return keyboard2
+    return keyboard
