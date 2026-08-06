@@ -1,5 +1,7 @@
 from aiogram import Router, F
 from aiogram.types import CallbackQuery
+from aiogram.fsm.context import FSMContext
+from states import StoryState
 
 from database import get_post, publish_story
 from config import CHANNEL_ID
@@ -59,16 +61,26 @@ async def reject_callback(callback: CallbackQuery):
 
 
 @router.callback_query(F.data.startswith("edit:"))
-async def edit_callback(callback: CallbackQuery):
+async def edit_callback(
+    callback: CallbackQuery,
+    state: FSMContext
+):
 
     story_id = int(
         callback.data.split(":")[1]
     )
 
+    await state.update_data(
+        edit_story_id=story_id
+    )
+
+    await state.set_state(
+        StoryState.waiting_for_edit
+    )
+
 
     await callback.message.answer(
-        f"✏️ Редактирование истории #{story_id}\n\n"
-        "Функция будет добавлена следующим шагом."
+        "✏️ Отправьте новый текст поста."
     )
 
 
