@@ -39,8 +39,20 @@ async def receive_story(message: Message, state: FSMContext):
     )
 
     try:
-        ai_result = await analyze_story(story)
-        post_text = await create_post(story)
+    print("Запускаю анализ истории")
+
+    ai_result = await analyze_story(story)
+
+    print("Анализ готов")
+
+    post_text = await create_post(story)
+
+    print("Пост готов")
+
+except Exception as e:
+    ai_result = f"Ошибка ИИ: {e}"
+    post_text = "Не удалось создать пост"
+    print(f"Ошибка ИИ: {e}")
 
     except Exception as e:
         ai_result = f"Ошибка ИИ: {e}"
