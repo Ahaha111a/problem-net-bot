@@ -8,6 +8,7 @@ from aiogram.types import Message
 
 from config import BOT_TOKEN
 from keyboards import main_keyboard
+from handlers import router
 
 
 bot = Bot(
@@ -56,6 +57,7 @@ async def support(message: Message):
 
 async def main():
     print("🚀 ProblemNet AI запущен")
+    dp.include_router(router)
     await dp.start_polling(bot)
 
 
