@@ -27,10 +27,20 @@ async def publish_callback(callback: CallbackQuery):
         return
 
 
-    await callback.bot.send_message(
-        CHANNEL_ID,
-        post_text
+    if len(post_text.strip()) < 50:
+
+    await callback.answer(
+        "❌ Пост слишком короткий",
+        show_alert=True
     )
+
+    return
+
+
+await callback.bot.send_message(
+    CHANNEL_ID,
+    post_text
+)
 
 
     publish_story(story_id)
