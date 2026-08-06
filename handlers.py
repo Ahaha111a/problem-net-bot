@@ -4,7 +4,7 @@ from aiogram.fsm.context import FSMContext
 
 from states import StoryState
 from config import ADMIN_ID
-from database import save_story
+from database import save_story, save_post
 from ai import analyze_story
 from post_generator import create_post
 from keyboards import moderation_keyboard
@@ -20,8 +20,8 @@ async def start_story(message: Message, state: FSMContext):
 
     await message.answer(
         "💙 Расскажите, что вас беспокоит.\n\n"
-        "Напишите всё одним сообщением. "
-        "Ваша история будет рассмотрена анонимно."
+        "Напишите вашу историю одним сообщением. "
+        "Она будет рассмотрена анонимно."
     )
 
 
@@ -40,35 +40,37 @@ async def receive_story(message: Message, state: FSMContext):
     )
 
     try:
-        print("Запускаю анализ истории")
 
         ai_result = await analyze_story(story)
 
-        print("Анализ готов")
-
         post_text = await create_post(story)
 
-        print("Пост готов")
+        save_post(
+            story_id,
+            post_text
+        )
 
     except Exception as e:
 
+        print(f"Ошибка ИИ: {e}")
+
         ai_result = f"Ошибка ИИ: {e}"
         post_text = "Не удалось создать пост"
-
-        print(f"Ошибка ИИ: {e}")
 
 
     await message.bot.send_message(
         ADMIN_ID,
         f"📥 <b>Новая история #{story_id}</b>\n\n"
         f"👤 Пользователь: {message.from_user.id}\n\n"
-        f"💭 <b>Текст:</b>\n{story}\n\n"
+        f"💭 <b>Текст:</b>\n"
+        f"{story}\n\n"
         f"🤖 <b>Анализ ИИ:</b>\n\n"
         f"{ai_result}\n\n"
         f"━━━━━━━━━━━━━━\n\n"
         f"📌 <b>Готовый пост:</b>\n\n"
         f"{post_text}",
-        reply_markup=moderation_keyboard()
+        reply_markup=moderation_keyboard(story_id),
+        parse_mode="HTML"
     )
 
 
@@ -76,5 +78,6 @@ async def receive_story(message: Message, state: FSMContext):
         "💙 Спасибо, что поделились.\n\n"
         "Ваша история отправлена на рассмотрение."
     )
+
 
     await state.clear()
