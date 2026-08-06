@@ -25,6 +25,7 @@ async def start_story(message: Message, state: FSMContext):
 async def receive_story(message: Message, state: FSMContext):
 
     story = message.text
+    
     save_story(
         message.from_user.id,
         story
