@@ -7,6 +7,7 @@ from config import ADMIN_ID
 from database import save_story
 from ai import analyze_story
 from post_generator import create_post
+from keyboards import moderation_keyboard
 
 
 router = Router()
@@ -47,16 +48,17 @@ async def receive_story(message: Message, state: FSMContext):
         print(f"Ошибка ИИ: {e}")
 
     await message.bot.send_message(
-        ADMIN_ID,
-        f"📥 <b>Новая история #{story_id}</b>\n\n"
-        f"👤 Пользователь: {message.from_user.id}\n\n"
-        f"💭 Текст:\n{story}\n\n"
-        f"🤖 <b>Анализ ИИ:</b>\n\n"
-        f"{ai_result}\n\n"
-        f"━━━━━━━━━━━━━━\n\n"
-        f"📌 <b>Готовый пост:</b>\n\n"
-        f"{post_text}"
-    )
+    ADMIN_ID,
+    f"📥 <b>Новая история #{story_id}</b>\n\n"
+    f"👤 Пользователь: {message.from_user.id}\n\n"
+    f"💭 Текст:\n{story}\n\n"
+    f"🤖 <b>Анализ ИИ:</b>\n\n"
+    f"{ai_result}\n\n"
+    f"━━━━━━━━━━━━━━\n\n"
+    f"📌 <b>Готовый пост:</b>\n\n"
+    f"{post_text}",
+    reply_markup=moderation_keyboard()
+)
 
     await message.answer(
         "💙 Спасибо, что поделились.\n\n"
