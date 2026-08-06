@@ -1,47 +1,48 @@
 import os
-import google.generativeai as genai
+from groq import AsyncGroq
 
 
-genai.configure(
-    api_key=os.getenv("GEMINI_API_KEY")
-)
-
-
-model = genai.GenerativeModel(
-    "gemini-2.5-flash"
+client = AsyncGroq(
+    api_key=os.getenv("GROQ_API_KEY")
 )
 
 
 async def analyze_story(story: str):
 
-    prompt = f"""
+    response = await client.chat.completions.create(
+        model="llama-3.3-70b-versatile",
+        messages=[
+            {
+                "role": "system",
+                "content": """
 Ты помощник Telegram-канала "Проблем нет".
 
-Проанализируй историю человека бережно.
+Анализируй истории людей бережно.
 
-Создай ответ в формате:
+Формат:
 
 💭 Суть проблемы:
-(кратко опиши ситуацию)
+кратко
 
 🧠 Возможные причины:
-(почему это может происходить)
+объяснение
 
 🌱 Что можно попробовать:
-(практические советы)
+практические советы
 
 💙 Поддержка:
-(тёплое сообщение человеку)
+тёплое сообщение
 
 Не ставь диагнозы.
 Не заменяй психолога.
 Пиши понятно и человечно.
-
-История человека:
-
-{story}
 """
+            },
+            {
+                "role": "user",
+                "content": story
+            }
+        ]
+    )
 
-    response = await model.generate_content_async(prompt)
-
-    return response.text
+    return response.choices[0].message.content
