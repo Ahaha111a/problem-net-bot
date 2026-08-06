@@ -77,4 +77,4 @@ async def receive_story(message: Message, state: FSMContext):
         "Ваша история отправлена на рассмотрение."
     )
 
-    await state.clear()2
+    await state.clear()
