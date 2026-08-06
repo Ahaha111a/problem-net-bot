@@ -1,7 +1,10 @@
 from aiogram.types import (
     ReplyKeyboardMarkup,
     KeyboardButton,
+    InlineKeyboardMarkup,
+    InlineKeyboardButton,
 )
+
 
 main_keyboard = ReplyKeyboardMarkup(
     keyboard=[
@@ -20,32 +23,28 @@ main_keyboard = ReplyKeyboardMarkup(
     input_field_placeholder="Выберите действие..."
 )
 
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
+def moderation_keyboard(story_id: int):
 
-def moderation_keyboard():
-
-    keyboard = InlineKeyboardMarkup(
+    return InlineKeyboardMarkup(
         inline_keyboard=[
             [
                 InlineKeyboardButton(
                     text="✅ Опубликовать",
-                    callback_data="publish"
+                    callback_data=f"publish:{story_id}"
                 )
             ],
             [
                 InlineKeyboardButton(
                     text="✏️ Изменить",
-                    callback_data="edit"
+                    callback_data=f"edit:{story_id}"
                 )
             ],
             [
                 InlineKeyboardButton(
                     text="❌ Отклонить",
-                    callback_data="reject"
+                    callback_data=f"reject:{story_id}"
                 )
             ]
         ]
     )
-
-    return keyboard
