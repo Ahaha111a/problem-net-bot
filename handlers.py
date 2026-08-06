@@ -81,3 +81,31 @@ async def receive_story(message: Message, state: FSMContext):
 
 
     await state.clear()
+@router.message(StoryState.waiting_for_edit)
+async def edit_post(
+    message: Message,
+    state: FSMContext
+):
+
+    from database import save_post
+
+
+    data = await state.get_data()
+
+    story_id = data.get(
+        "edit_story_id"
+    )
+
+
+    save_post(
+        story_id,
+        message.text
+    )
+
+
+    await message.answer(
+        "✅ Новый текст сохранён."
+    )
+
+
+    await state.clear()
