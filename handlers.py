@@ -37,11 +37,11 @@ async def receive_story(message: Message, state: FSMContext):
     )
 
     try:
-    ai_result = await analyze_story(story)
+        ai_result = await analyze_story(story)
 
-except Exception as e:
-    ai_result = f"Ошибка Gemini: {e}"
-    print(f"Ошибка Gemini: {e}")
+    except Exception as e:
+        ai_result = f"Ошибка Gemini: {e}"
+        print(f"Ошибка Gemini: {e}")
 
     await message.bot.send_message(
         ADMIN_ID,
