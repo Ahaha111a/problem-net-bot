@@ -30,13 +30,13 @@ async def receive_story(message: Message, state: FSMContext):
         message.from_user.id,
         story
     )
-
-    await message.bot.send_message(
+await message.bot.send_message(
     ADMIN_ID,
-    f"📥 <b>Новая история</b>\n\n"
+    f"📥 <b>Новая история #{story_id}</b>\n\n"
     f"👤 Пользователь: {message.from_user.id}\n\n"
     f"💭 Текст:\n{story}"
-    )
+)
+    
 
     await message.answer(
         "💙 Спасибо, что поделились.\n\n"
