@@ -20,6 +20,7 @@ connection.commit()
 
 
 def save_story(user_id: int, text: str):
+
     print("💾 История сохранена в базе")
 
     cursor.execute(
@@ -31,6 +32,8 @@ def save_story(user_id: int, text: str):
     )
 
     connection.commit()
+
+    return cursor.lastrowid
 
 
 def get_all_stories():
