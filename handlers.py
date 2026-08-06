@@ -32,9 +32,10 @@ async def receive_story(message: Message, state: FSMContext):
     )
 
     await message.bot.send_message(
-        ADMIN_ID,
-        "📥 Новая история:\n\n"
-        f"{story}"
+    ADMIN_ID,
+    f"📥 <b>Новая история</b>\n\n"
+    f"👤 Пользователь: {message.from_user.id}\n\n"
+    f"💭 Текст:\n{story}"
     )
 
     await message.answer(
