@@ -1,50 +1,47 @@
 import os
+import google.generativeai as genai
 
-from openai import AsyncOpenAI
+
+genai.configure(
+    api_key=os.getenv("GEMINI_API_KEY")
+)
 
 
-client = AsyncOpenAI(
-    api_key=os.getenv("OPENAI_API_KEY")
+model = genai.GenerativeModel(
+    "gemini-1.5-flash"
 )
 
 
 async def analyze_story(story: str):
 
-    response = await client.chat.completions.create(
-        model="gpt-4.1-mini",
-        messages=[
-            {
-                "role": "system",
-                "content": """
+    prompt = f"""
 Ты помощник Telegram-канала "Проблем нет".
 
-Твоя задача:
-анализировать истории людей бережно.
+Проанализируй историю человека бережно.
 
-Формат ответа:
+Создай ответ в формате:
 
 💭 Суть проблемы:
-(кратко)
+(кратко опиши ситуацию)
 
 🧠 Возможные причины:
-(объяснение)
+(почему это может происходить)
 
 🌱 Что можно попробовать:
-(советы)
+(практические советы)
 
 💙 Поддержка:
-(тёплое завершение)
+(тёплое сообщение человеку)
 
 Не ставь диагнозы.
 Не заменяй психолога.
 Пиши понятно и человечно.
-"""
-            },
-            {
-                "role": "user",
-                "content": story
-            }
-        ]
-    )
 
-    return response.choices[0].message.content
+История человека:
+
+{story}
+"""
+
+    response = await model.generate_content_async(prompt)
+
+    return response.text
