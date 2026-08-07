@@ -20,6 +20,7 @@ CREATE TABLE IF NOT EXISTS stories (
 )
 """)
 
+
 connection.commit()
 
 
@@ -27,15 +28,22 @@ def save_story(user_id: int, text: str):
 
     cursor.execute(
         """
-        INSERT INTO stories (user_id, text)
+        INSERT INTO stories (
+            user_id,
+            text
+        )
         VALUES (?, ?)
         """,
-        (user_id, text)
+        (
+            user_id,
+            text
+        )
     )
 
     connection.commit()
 
     return cursor.lastrowid
+
 
 
 def save_post(story_id: int, post_text: str):
@@ -46,10 +54,14 @@ def save_post(story_id: int, post_text: str):
         SET post_text = ?
         WHERE id = ?
         """,
-        (post_text, story_id)
+        (
+            post_text,
+            story_id
+        )
     )
 
     connection.commit()
+
 
 
 def get_post(story_id: int):
@@ -60,15 +72,18 @@ def get_post(story_id: int):
         FROM stories
         WHERE id = ?
         """,
-        (story_id,)
+        (
+            story_id,
+        )
     )
 
-    row = cursor.fetchone()
+    result = cursor.fetchone()
 
-    if row:
-        return row[0]
+    if result:
+        return result[0]
 
     return None
+
 
 
 def publish_story(story_id: int):
@@ -79,10 +94,13 @@ def publish_story(story_id: int):
         SET status = 'published'
         WHERE id = ?
         """,
-        (story_id,)
+        (
+            story_id,
+        )
     )
 
     connection.commit()
+
 
 
 def reject_story(story_id: int):
@@ -93,10 +111,28 @@ def reject_story(story_id: int):
         SET status = 'rejected'
         WHERE id = ?
         """,
-        (story_id,)
+        (
+            story_id,
+        )
     )
 
     connection.commit()
+
+
+
+def get_waiting_stories():
+
+    cursor.execute(
+        """
+        SELECT id, text, created_at
+        FROM stories
+        WHERE status = 'waiting'
+        ORDER BY id DESC
+        """
+    )
+
+    return cursor.fetchall()
+
 
 
 def get_all_stories():
@@ -112,27 +148,51 @@ def get_all_stories():
     return cursor.fetchall()
 
 
+
 def get_stats():
 
     cursor.execute(
-        "SELECT COUNT(*) FROM stories"
+        """
+        SELECT COUNT(*)
+        FROM stories
+        """
     )
+
     total = cursor.fetchone()[0]
 
+
     cursor.execute(
-        "SELECT COUNT(*) FROM stories WHERE status='published'"
+        """
+        SELECT COUNT(*)
+        FROM stories
+        WHERE status = 'published'
+        """
     )
+
     published = cursor.fetchone()[0]
 
-    cursor.execute(
-        "SELECT COUNT(*) FROM stories WHERE status='rejected'"
-    )
-    rejected = cursor.fetchone()[0]
 
     cursor.execute(
-        "SELECT COUNT(*) FROM stories WHERE status='waiting'"
+        """
+        SELECT COUNT(*)
+        FROM stories
+        WHERE status = 'rejected'
+        """
     )
+
+    rejected = cursor.fetchone()[0]
+
+
+    cursor.execute(
+        """
+        SELECT COUNT(*)
+        FROM stories
+        WHERE status = 'waiting'
+        """
+    )
+
     waiting = cursor.fetchone()[0]
+
 
     return {
         "total": total,
@@ -140,17 +200,3 @@ def get_stats():
         "rejected": rejected,
         "waiting": waiting
     }
-
-
-def get_waiting_stories():
-
-    cursor.execute(
-        """
-        SELECT id, text, created_at
-        FROM stories
-        WHERE status='waiting'
-        ORDER BY id DESC
-        """
-    )
-
-    return cursor.fetchall()
