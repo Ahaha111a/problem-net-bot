@@ -1,56 +1,238 @@
-import logging
-from aiogram import Router, F, types
-from aiogram.filters import Command
-from aiogram.fsm.context import FSMContext
-from aiogram.fsm.state import State, StatesGroup
+import sqlite3
+from datetime import datetime
 
-from database import get_all_stories, get_stats, get_story_by_id
-from keyboards import admin_keyboard, main_keyboard, moderation_keyboard
-from states import StoryState
-
-logger = logging.getLogger(__name__)
-moderation_router = Router()
+from config import DB_PATH
 
 
-# ====================== АДМИН-ПАНЕЛЬ (без скрытия) ======================
-@moderation_router.message(F.text == "👨‍💼 Админ-панель")
-async def admin_panel(message: types.Message, state: FSMContext):
-    await message.answer("Выбери действие:", reply_markup=admin_keyboard)
+def get_connection():
+    connection = sqlite3.connect(DB_PATH)
+    connection.row_factory = sqlite3.Row
+    return connection
 
 
-@moderation_router.message(F.text == "📊 Статистика")
-async def admin_stats(message: types.Message):
-    stats = await get_stats()
-    text = (
-        f"📊 Статистика бота:\n\n"
-        f"Всего историй: {stats['total']}\n"
-        f"Опубликовано: {stats['published']}\n"
-        f"Отклонено: {stats['rejected']}\n"
-        f"Оживает модерации: {stats['waiting']}"
+def init_db():
+    connection = get_connection()
+
+    cursor = connection.cursor()
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS stories (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            text TEXT NOT NULL,
+            ai_result TEXT,
+            post_text TEXT,
+            status TEXT NOT NULL DEFAULT 'waiting',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            published_at TIMESTAMP
+        )
+    """)
+
+    connection.commit()
+    connection.close()
+
+
+def create_story(user_id: int, text: str):
+    connection = get_connection()
+
+    cursor = connection.cursor()
+
+    cursor.execute(
+        """
+        INSERT INTO stories (
+            user_id,
+            text,
+            status
+        )
+        VALUES (?, ?, 'waiting')
+        """,
+        (user_id, text)
     )
-    await message.answer(text)
+
+    story_id = cursor.lastrowid
+
+    connection.commit()
+    connection.close()
+
+    return story_id
 
 
-@moderation_router.message(F.text == "⏳ Модерация")
-async def moderation_start(message: types.Message):
-    stories = await get_all_stories()
-    if not stories:
-        await message.answer("Нет историй на модерации.")
-        return
+def get_story(story_id: int):
+    connection = get_connection()
 
-    for story in stories:
-        if story["status"] == "waiting":
-            story_text = story["text"]
-            if len(story_text) > 300:
-                story_text = story_text[:300] + "..."
-            await message.answer(
-                f"📖 История #{story['id']} — Пользователь: {story['user_id']}\n\n{story_text}\n\n"
-                f"Выбери действие:",
-                reply_markup=moderation_keyboard(story["id"])
-            )
+    cursor = connection.cursor()
+
+    cursor.execute(
+        """
+        SELECT *
+        FROM stories
+        WHERE id = ?
+        """,
+        (story_id,)
+    )
+
+    story = cursor.fetchone()
+
+    connection.close()
+
+    return story
 
 
-@moderation_router.message(F.text == "⬅️ Назад")
-async def admin_back(message: types.Message, state: FSMContext):
-    await state.clear()
-    await message.answer("Главное меню:", reply_markup=main_keyboard)
+def update_ai_result(story_id: int, ai_result: str):
+    connection = get_connection()
+
+    cursor = connection.cursor()
+
+    cursor.execute(
+        """
+        UPDATE stories
+        SET ai_result = ?
+        WHERE id = ?
+        """,
+        (ai_result, story_id)
+    )
+
+    connection.commit()
+    connection.close()
+
+
+def update_post(story_id: int, post_text: str):
+    connection = get_connection()
+
+    cursor = connection.cursor()
+
+    cursor.execute(
+        """
+        UPDATE stories
+        SET post_text = ?
+        WHERE id = ?
+        """,
+        (post_text, story_id)
+    )
+
+    connection.commit()
+    connection.close()
+
+
+def get_waiting_stories():
+    connection = get_connection()
+
+    cursor = connection.cursor()
+
+    cursor.execute(
+        """
+        SELECT *
+        FROM stories
+        WHERE status = 'waiting'
+        ORDER BY id DESC
+        """
+    )
+
+    stories = cursor.fetchall()
+
+    connection.close()
+
+    return stories
+
+
+def publish_story(story_id: int):
+    connection = get_connection()
+
+    cursor = connection.cursor()
+
+    cursor.execute(
+        """
+        UPDATE stories
+        SET status = 'published',
+            published_at = ?
+        WHERE id = ?
+        """,
+        (datetime.now(), story_id)
+    )
+
+    connection.commit()
+    connection.close()
+
+
+def reject_story(story_id: int):
+    connection = get_connection()
+
+    cursor = connection.cursor()
+
+    cursor.execute(
+        """
+        UPDATE stories
+        SET status = 'rejected'
+        WHERE id = ?
+        """,
+        (story_id,)
+    )
+
+    connection.commit()
+    connection.close()
+
+
+def get_all_stories():
+    connection = get_connection()
+
+    cursor = connection.cursor()
+
+    cursor.execute(
+        """
+        SELECT *
+        FROM stories
+        ORDER BY id DESC
+        """
+    )
+
+    stories = cursor.fetchall()
+
+    connection.close()
+
+    return stories
+
+
+def get_stats():
+    connection = get_connection()
+
+    cursor = connection.cursor()
+
+    cursor.execute(
+        """
+        SELECT
+            COUNT(*) AS total,
+            SUM(
+                CASE
+                    WHEN status = 'waiting'
+                    THEN 1
+                    ELSE 0
+                END
+            ) AS waiting,
+            SUM(
+                CASE
+                    WHEN status = 'published'
+                    THEN 1
+                    ELSE 0
+                END
+            ) AS published,
+            SUM(
+                CASE
+                    WHEN status = 'rejected'
+                    THEN 1
+                    ELSE 0
+                END
+            ) AS rejected
+        FROM stories
+        """
+    )
+
+    stats = cursor.fetchone()
+
+    connection.close()
+
+    return {
+        "total": stats["total"] or 0,
+        "waiting": stats["waiting"] or 0,
+        "published": stats["published"] or 0,
+        "rejected": stats["rejected"] or 0,
+    }a
