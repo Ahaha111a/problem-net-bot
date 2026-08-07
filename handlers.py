@@ -1,238 +1,399 @@
-import sqlite3
-from datetime import datetime
+from aiogram import Router, F
+from aiogram.types import Message
+from aiogram.fsm.context import FSMContext
 
-from config import DB_PATH
+from config import ADMIN_IDS
+
+from database import (
+    create_story,
+    update_ai_result,
+    update_post,
+    get_waiting_stories,
+    get_all_stories,
+    get_stats,
+)
+
+from ai import analyze_story
+from post_generator import create_post
+
+from states import StoryState
+
+from keyboards import (
+    main_keyboard,
+    admin_keyboard,
+    moderation_keyboard,
+)
 
 
-def get_connection():
-    connection = sqlite3.connect(DB_PATH)
-    connection.row_factory = sqlite3.Row
-    return connection
+router = Router()
 
 
-def init_db():
-    connection = get_connection()
+def is_admin(user_id: int) -> bool:
+    return user_id in ADMIN_IDS
 
-    cursor = connection.cursor()
 
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS stories (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id INTEGER NOT NULL,
-            text TEXT NOT NULL,
-            ai_result TEXT,
-            post_text TEXT,
-            status TEXT NOT NULL DEFAULT 'waiting',
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            published_at TIMESTAMP
+# =========================================================
+# START
+# =========================================================
+
+@router.message(F.text == "/start")
+async def start_handler(message: Message):
+    await message.answer(
+        "👋 Привет!\n\n"
+        "Это бот проекта «Проблем нет».\n\n"
+        "Здесь можно анонимно поделиться своей историей, "
+        "получить поддержку и полезную информацию.\n\n"
+        "🔒 Истории публикуются анонимно.",
+        reply_markup=main_keyboard,
+    )
+
+
+# =========================================================
+# HELP
+# =========================================================
+
+@router.message(F.text == "/help")
+async def help_handler(message: Message):
+    await message.answer(
+        "ℹ️ Помощь\n\n"
+        "📝 Поделиться историей — отправить свою историю анонимно.\n\n"
+        "💡 Совет дня — получить полезный совет.\n\n"
+        "📚 Полезные материалы — полезная информация.\n\n"
+        "❤️ Поддержка — слова поддержки."
+    )
+
+
+# =========================================================
+# ПОДЕЛИТЬСЯ ИСТОРИЕЙ
+# =========================================================
+
+@router.message(F.text == "📝 Поделиться историей")
+async def share_story_handler(
+    message: Message,
+    state: FSMContext,
+):
+    await state.set_state(
+        StoryState.waiting_for_story
+    )
+
+    await message.answer(
+        "📝 Напиши свою историю.\n\n"
+        "🔒 История будет обработана анонимно.\n\n"
+        "Когда закончишь — отправь текст."
+    )
+
+
+# =========================================================
+# ПОЛУЧЕНИЕ ИСТОРИИ
+# =========================================================
+
+@router.message(StoryState.waiting_for_story)
+async def receive_story_handler(
+    message: Message,
+    state: FSMContext,
+):
+    story = message.text
+
+    if not story:
+        await message.answer(
+            "❗ Пожалуйста, отправь историю текстом."
         )
-    """)
+        return
 
-    connection.commit()
-    connection.close()
+    story = story.strip()
 
-
-def create_story(user_id: int, text: str):
-    connection = get_connection()
-
-    cursor = connection.cursor()
-
-    cursor.execute(
-        """
-        INSERT INTO stories (
-            user_id,
-            text,
-            status
+    if len(story) < 10:
+        await message.answer(
+            "✏️ История слишком короткая.\n\n"
+            "Попробуй написать немного подробнее."
         )
-        VALUES (?, ?, 'waiting')
-        """,
-        (user_id, text)
+        return
+
+    await message.answer(
+        "⏳ Спасибо. Обрабатываю твою историю..."
     )
 
-    story_id = cursor.lastrowid
-
-    connection.commit()
-    connection.close()
-
-    return story_id
-
-
-def get_story(story_id: int):
-    connection = get_connection()
-
-    cursor = connection.cursor()
-
-    cursor.execute(
-        """
-        SELECT *
-        FROM stories
-        WHERE id = ?
-        """,
-        (story_id,)
+    # Сохраняем историю
+    story_id = create_story(
+        user_id=message.from_user.id,
+        text=story,
     )
 
-    story = cursor.fetchone()
+    # =====================================================
+    # АНАЛИЗ ИИ
+    # =====================================================
 
-    connection.close()
+    try:
+        ai_result = await analyze_story(story)
 
-    return story
+        update_ai_result(
+            story_id,
+            ai_result,
+        )
 
+    except Exception as error:
+        print(
+            f"AI ANALYZE ERROR: {error}"
+        )
 
-def update_ai_result(story_id: int, ai_result: str):
-    connection = get_connection()
+        ai_result = (
+            "Анализ временно недоступен."
+        )
 
-    cursor = connection.cursor()
+        update_ai_result(
+            story_id,
+            ai_result,
+        )
 
-    cursor.execute(
-        """
-        UPDATE stories
-        SET ai_result = ?
-        WHERE id = ?
-        """,
-        (ai_result, story_id)
+    # =====================================================
+    # СОЗДАНИЕ ПОСТА
+    # =====================================================
+
+    try:
+        post_text = await create_post(story)
+
+        update_post(
+            story_id,
+            post_text,
+        )
+
+    except Exception as error:
+        print(
+            f"POST GENERATION ERROR: {error}"
+        )
+
+        await message.answer(
+            "❌ Не удалось подготовить историю "
+            "для публикации.\n\n"
+            "Попробуй ещё раз немного позже."
+        )
+
+        await state.clear()
+        return
+
+    # =====================================================
+    # ОТВЕТ ПОЛЬЗОВАТЕЛЮ
+    # =====================================================
+
+    await message.answer(
+        "✅ История получена!\n\n"
+        "Она отправлена на модерацию.\n\n"
+        "🔒 Твои личные данные не публикуются."
     )
 
-    connection.commit()
-    connection.close()
+    # =====================================================
+    # ОТПРАВКА АДМИНИСТРАТОРАМ
+    # =====================================================
 
-
-def update_post(story_id: int, post_text: str):
-    connection = get_connection()
-
-    cursor = connection.cursor()
-
-    cursor.execute(
-        """
-        UPDATE stories
-        SET post_text = ?
-        WHERE id = ?
-        """,
-        (post_text, story_id)
+    moderation_text = (
+        f"📥 <b>Новая история #{story_id}</b>\n\n"
+        "🔒 История отправлена анонимно.\n\n"
+        "━━━━━━━━━━━━━━\n\n"
+        "💭 <b>Исходный текст:</b>\n\n"
+        f"{story}\n\n"
+        "━━━━━━━━━━━━━━\n\n"
+        "🧠 <b>Анализ ИИ:</b>\n\n"
+        f"{ai_result}\n\n"
+        "━━━━━━━━━━━━━━\n\n"
+        "📌 <b>Готовый пост:</b>\n\n"
+        f"{post_text}"
     )
 
-    connection.commit()
-    connection.close()
+    for admin_id in ADMIN_IDS:
+        try:
+            await message.bot.send_message(
+                admin_id,
+                moderation_text,
+                parse_mode="HTML",
+                reply_markup=moderation_keyboard(
+                    story_id
+                ),
+            )
+
+        except Exception as error:
+            print(
+                f"ADMIN SEND ERROR ({admin_id}): {error}"
+            )
+
+    await state.clear()
 
 
-def get_waiting_stories():
-    connection = get_connection()
+# =========================================================
+# СОВЕТ ДНЯ
+# =========================================================
 
-    cursor = connection.cursor()
-
-    cursor.execute(
-        """
-        SELECT *
-        FROM stories
-        WHERE status = 'waiting'
-        ORDER BY id DESC
-        """
+@router.message(F.text == "💡 Совет дня")
+async def daily_tip_handler(
+    message: Message,
+):
+    await message.answer(
+        "💡 <b>Совет дня</b>\n\n"
+        "Не требуй от себя решить всю проблему сразу.\n\n"
+        "Попробуй выбрать один маленький шаг, "
+        "который ты можешь сделать сегодня.",
+        parse_mode="HTML",
     )
 
-    stories = cursor.fetchall()
 
-    connection.close()
+# =========================================================
+# ПОЛЕЗНЫЕ МАТЕРИАЛЫ
+# =========================================================
 
-    return stories
-
-
-def publish_story(story_id: int):
-    connection = get_connection()
-
-    cursor = connection.cursor()
-
-    cursor.execute(
-        """
-        UPDATE stories
-        SET status = 'published',
-            published_at = ?
-        WHERE id = ?
-        """,
-        (datetime.now(), story_id)
+@router.message(F.text == "📚 Полезные материалы")
+async def materials_handler(
+    message: Message,
+):
+    await message.answer(
+        "📚 <b>Полезные материалы</b>\n\n"
+        "Здесь скоро появятся материалы "
+        "о тревоге, стрессе, самооценке, отношениях "
+        "и эмоциональном состоянии.",
+        parse_mode="HTML",
     )
 
-    connection.commit()
-    connection.close()
 
+# =========================================================
+# ПОДДЕРЖКА
+# =========================================================
 
-def reject_story(story_id: int):
-    connection = get_connection()
-
-    cursor = connection.cursor()
-
-    cursor.execute(
-        """
-        UPDATE stories
-        SET status = 'rejected'
-        WHERE id = ?
-        """,
-        (story_id,)
+@router.message(F.text == "❤️ Поддержка")
+async def support_handler(
+    message: Message,
+):
+    await message.answer(
+        "❤️ Ты не обязан справляться со всем один.\n\n"
+        "Иногда уже сам факт того, что ты смог "
+        "рассказать о своей проблеме, — важный шаг.\n\n"
+        "Береги себя."
     )
 
-    connection.commit()
-    connection.close()
 
+# =========================================================
+# АДМИН-ПАНЕЛЬ
+# =========================================================
 
-def get_all_stories():
-    connection = get_connection()
+@router.message(F.text == "👨‍💼 Админ-панель")
+async def admin_panel_handler(
+    message: Message,
+):
+    if not is_admin(message.from_user.id):
+        return
 
-    cursor = connection.cursor()
-
-    cursor.execute(
-        """
-        SELECT *
-        FROM stories
-        ORDER BY id DESC
-        """
+    await message.answer(
+        "👨‍💼 <b>Панель администратора</b>\n\n"
+        "Выберите действие:",
+        parse_mode="HTML",
+        reply_markup=admin_keyboard,
     )
 
-    stories = cursor.fetchall()
 
-    connection.close()
+# =========================================================
+# СТАТИСТИКА
+# =========================================================
 
-    return stories
+@router.message(F.text == "📊 Статистика")
+async def stats_handler(
+    message: Message,
+):
+    if not is_admin(message.from_user.id):
+        return
 
+    stats = get_stats()
 
-def get_stats():
-    connection = get_connection()
-
-    cursor = connection.cursor()
-
-    cursor.execute(
-        """
-        SELECT
-            COUNT(*) AS total,
-            SUM(
-                CASE
-                    WHEN status = 'waiting'
-                    THEN 1
-                    ELSE 0
-                END
-            ) AS waiting,
-            SUM(
-                CASE
-                    WHEN status = 'published'
-                    THEN 1
-                    ELSE 0
-                END
-            ) AS published,
-            SUM(
-                CASE
-                    WHEN status = 'rejected'
-                    THEN 1
-                    ELSE 0
-                END
-            ) AS rejected
-        FROM stories
-        """
+    await message.answer(
+        "📊 <b>Статистика</b>\n\n"
+        f"📚 Всего историй: {stats['total']}\n\n"
+        f"⏳ На модерации: {stats['waiting']}\n"
+        f"✅ Опубликовано: {stats['published']}\n"
+        f"❌ Отклонено: {stats['rejected']}",
+        parse_mode="HTML",
     )
 
-    stats = cursor.fetchone()
 
-    connection.close()
+# =========================================================
+# МОДЕРАЦИЯ
+# =========================================================
 
-    return {
-        "total": stats["total"] or 0,
-        "waiting": stats["waiting"] or 0,
-        "published": stats["published"] or 0,
-        "rejected": stats["rejected"] or 0,
-    }a
+@router.message(F.text == "⏳ Модерация")
+async def moderation_handler(
+    message: Message,
+):
+    if not is_admin(message.from_user.id):
+        return
+
+    stories = get_waiting_stories()
+
+    if not stories:
+        await message.answer(
+            "🟢 Сейчас нет историй на модерации."
+        )
+        return
+
+    await message.answer(
+        f"⏳ <b>Истории на модерации: "
+        f"{len(stories)}</b>",
+        parse_mode="HTML",
+    )
+
+    for story in stories[:20]:
+        story_id = story["id"]
+        text = story["text"]
+
+        await message.answer(
+            f"📥 <b>История #{story_id}</b>\n\n"
+            f"{text}",
+            parse_mode="HTML",
+            reply_markup=moderation_keyboard(
+                story_id
+            ),
+        )
+
+
+# =========================================================
+# ВСЕ ИСТОРИИ
+# =========================================================
+
+@router.message(F.text == "📁 Все истории")
+async def all_stories_handler(
+    message: Message,
+):
+    if not is_admin(message.from_user.id):
+        return
+
+    stories = get_all_stories()
+
+    if not stories:
+        await message.answer(
+            "📁 Историй пока нет."
+        )
+        return
+
+    text = "📁 <b>Последние истории:</b>\n\n"
+
+    for story in stories[:20]:
+        text += (
+            f"#{story['id']} — "
+            f"{story['status']}\n"
+        )
+
+    await message.answer(
+        text,
+        parse_mode="HTML",
+    )
+
+
+# =========================================================
+# НАЗАД
+# =========================================================
+
+@router.message(F.text == "⬅️ Назад")
+async def back_handler(
+    message: Message,
+    state: FSMContext,
+):
+    await state.clear()
+
+    await message.answer(
+        "↩️ Главное меню",
+        reply_markup=main_keyboard,
+    )
