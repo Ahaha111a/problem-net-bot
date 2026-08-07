@@ -16,7 +16,7 @@ from keyboards import (
     main_keyboard,
     moderation_keyboard,
     admin_keyboard,
-)1
+)
 
 
 router = Router()
