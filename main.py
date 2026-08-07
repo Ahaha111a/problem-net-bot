@@ -19,7 +19,6 @@ async def main():
 
 
     dp.include_router(router)
-
     dp.include_router(callbacks_router)
 
 
