@@ -1,250 +1,56 @@
-from aiogram import Router, F
-from aiogram.types import Message
-from aiogram.fsm.context import FSMContext
+import logging
+from aiogram import Router, F, types
 from aiogram.filters import Command
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import State, StatesGroup
 
+from database import get_all_stories, get_stats, get_story_by_id
+from keyboards import admin_keyboard, main_keyboard, moderation_keyboard
 from states import StoryState
-from config import ADMIN_ID
-from database import (
-    save_story,
-    save_post,
-    get_stats,
-    get_waiting_stories,
-)
-from ai import analyze_story
-from post_generator import create_post
-from keyboards import (
-    main_keyboard,
-    moderation_keyboard,
-    admin_keyboard,
-)
+
+logger = logging.getLogger(__name__)
+moderation_router = Router()
 
 
-router = Router()
+# ====================== АДМИН-ПАНЕЛЬ (без скрытия) ======================
+@moderation_router.message(F.text == "👨‍💼 Админ-панель")
+async def admin_panel(message: types.Message, state: FSMContext):
+    await message.answer("Выбери действие:", reply_markup=admin_keyboard)
 
 
-@router.message(Command("start"))
-async def start_command(message: Message):
-
-    await message.answer(
-        "👋 Добро пожаловать в «Проблем нет»\n\n"
-        "Это пространство, где можно поделиться тем, "
-        "что тревожит, беспокоит или давно лежит внутри.\n\n"
-        "💙 Здесь:\n"
-        "• истории рассматриваются анонимно;\n"
-        "• нет осуждения и оценок;\n"
-        "• каждая история может помочь кому-то ещё.\n\n"
-        "📝 Нажмите кнопку ниже и расскажите свою историю.\n\n"
-        "Помните: проблем нет. ",
-        reply_markup=main_keyboard
+@moderation_router.message(F.text == "📊 Статистика")
+async def admin_stats(message: types.Message):
+    stats = await get_stats()
+    text = (
+        f"📊 Статистика бота:\n\n"
+        f"Всего историй: {stats['total']}\n"
+        f"Опубликовано: {stats['published']}\n"
+        f"Отклонено: {stats['rejected']}\n"
+        f"Оживает модерации: {stats['waiting']}"
     )
+    await message.answer(text)
 
 
-@router.message(Command("help"))
-async def help_command(message: Message):
-
-    await message.answer(
-        "💡 Как пользоваться ботом:\n\n"
-        "1️⃣ Нажмите «📝 Поделиться историей».\n"
-        "2️⃣ Напишите свою историю.\n"
-        "3️⃣ Бот подготовит материал для публикации.\n\n"
-        "Спасибо за доверие 💙"
-    )
-
-
-@router.message(F.text == "⏳ Модерация")
-async def moderation_list(message: Message):
-
-    if message.from_user.id != ADMIN_ID:
-        return
-
-    stories = get_waiting_stories()
-
+@moderation_router.message(F.text == "⏳ Модерация")
+async def moderation_start(message: types.Message):
+    stories = await get_all_stories()
     if not stories:
-        await message.answer(
-            "🟢 Нет историй на модерации."
-        )
+        await message.answer("Нет историй на модерации.")
         return
 
-
-    for story in stories[:10]:
-
-        await message.answer(
-            f"⏳ <b>История #{story[0]}</b>\n\n"
-            f"{story[1]}\n\n"
-            f"📅 {story[2]}",
-            parse_mode="HTML",
-            reply_markup=moderation_keyboard(
-                story[0]
+    for story in stories:
+        if story["status"] == "waiting":
+            story_text = story["text"]
+            if len(story_text) > 300:
+                story_text = story_text[:300] + "..."
+            await message.answer(
+                f"📖 История #{story['id']} — Пользователь: {story['user_id']}\n\n{story_text}\n\n"
+                f"Выбери действие:",
+                reply_markup=moderation_keyboard(story["id"])
             )
-        )
 
 
-@router.message(F.text == "👨‍💼 Админ-панель")
-async def admin_panel(message: Message):
-
-    if message.from_user.id != ADMIN_ID:
-        return
-
-    await message.answer(
-        "👨‍💼 Панель администратора",
-        reply_markup=admin_keyboard
-    )
-
-
-@router.message(F.text == "⬅️ Назад")
-async def back_to_main(message: Message):
-
-    await message.answer(
-        "Главное меню",
-        reply_markup=main_keyboard
-        )
-
-
-@router.message(F.text == "📊 Статистика")
-async def admin_stats(message: Message):
-
-    if message.from_user.id != ADMIN_ID:
-        return
-
-    stats = get_stats()
-
-    await message.answer(
-        f"📊 <b>Статистика проекта</b>\n\n"
-        f"📝 Всего историй: {stats['total']}\n"
-        f"✅ Опубликовано: {stats['published']}\n"
-        f"❌ Отклонено: {stats['rejected']}\n"
-        f"🟡 На модерации: {stats['waiting']}",
-        parse_mode="HTML"
-    )
-    
-
-@router.message(Command("stats"))
-async def stats_command(message: Message):
-
-    if message.from_user.id != ADMIN_ID:
-        return
-
-    stats = get_stats()
-
-    await message.answer(
-        f"📊 <b>Статистика проекта</b>\n\n"
-        f"📝 Всего историй: {stats['total']}\n"
-        f"✅ Опубликовано: {stats['published']}\n"
-        f"❌ Отклонено: {stats['rejected']}\n"
-        f"🟡 На модерации: {stats['waiting']}",
-        parse_mode="HTML"
-    )
-
-
-@router.message(F.text == "📝 Поделиться историей")
-async def start_story(message: Message, state: FSMContext):
-
-    await state.set_state(
-        StoryState.waiting_for_story
-    )
-
-    await message.answer(
-        "💙 Расскажите свою историю.\n\n"
-        "Можно написать всё, что вас беспокоит."
-    )
-
-
-@router.message(StoryState.waiting_for_story)
-async def receive_story(
-    message: Message,
-    state: FSMContext
-):
-
-    story = message.text
-
-
-    story_id = save_story(
-        message.from_user.id,
-        story
-    )
-
-
-    await message.answer(
-        "🤖 Анализирую вашу историю..."
-    )
-
-
-    try:
-
-        ai_result = await analyze_story(story)
-
-        post_text = await create_post(story)
-
-        save_post(
-            story_id,
-            post_text
-        )
-
-
-    except Exception as e:
-
-        print(
-            f"Ошибка ИИ: {e}"
-        )
-
-        ai_result = "Не удалось выполнить анализ."
-        post_text = "Не удалось создать пост."
-
-
-    await message.bot.send_message(
-        ADMIN_ID,
-
-        f"📥 <b>Новая история #{story_id}</b>\n\n"
-        f"👤 Пользователь: {message.from_user.id}\n\n"
-        f"💭 <b>Текст:</b>\n"
-        f"{story}\n\n"
-        f"🤖 <b>Анализ ИИ:</b>\n"
-        f"{ai_result}\n\n"
-        f"━━━━━━━━━━━━━━\n\n"
-        f"📌 <b>Готовый пост:</b>\n\n"
-        f"{post_text}",
-
-        reply_markup=moderation_keyboard(
-            story_id
-        ),
-
-        parse_mode="HTML"
-    )
-
-
-    await message.answer(
-        "💙 Спасибо, что поделились.\n"
-        "Ваша история отправлена на рассмотрение."
-    )
-
-
+@moderation_router.message(F.text == "⬅️ Назад")
+async def admin_back(message: types.Message, state: FSMContext):
     await state.clear()
-
-
-
-@router.message(StoryState.waiting_for_edit)
-async def edit_post(
-    message: Message,
-    state: FSMContext
-):
-
-    data = await state.get_data()
-
-    story_id = data.get(
-        "edit_story_id"
-    )
-
-
-    save_post(
-        story_id,
-        message.text
-    )
-
-
-    await message.answer(
-        "✅ Новый текст поста сохранён."
-    )
-
-
-    await state.clear()
+    await message.answer("Главное меню:", reply_markup=main_keyboard)
