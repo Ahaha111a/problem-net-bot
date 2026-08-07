@@ -1,49 +1,36 @@
 import asyncio
 
 from aiogram import Bot, Dispatcher
-from aiogram.types import BotCommand
 
 from config import BOT_TOKEN
-
+from database import init_db
 from handlers import router
-from callbacks import router as callbacks_router
+from callbacks import callback_router
 
 
 async def main():
+    # Создаём таблицы базы данных
+    init_db()
 
-    bot = Bot(
-        token=BOT_TOKEN
-    )
+    # Создаём бота
+    bot = Bot(token=BOT_TOKEN)
 
+    # Создаём диспетчер
     dp = Dispatcher()
 
-
+    # Подключаем обработчики пользователей
     dp.include_router(router)
-    dp.include_router(callbacks_router)
 
-
-    await bot.set_my_commands(
-        [
-            BotCommand(
-                command="start",
-                description="Начать"
-            ),
-            BotCommand(
-                command="help",
-                description="Помощь"
-            )
-        ]
-    )
-
+    # Подключаем обработчики кнопок модерации
+    dp.include_router(callback_router)
 
     print("🚀 Бот запущен")
 
-
-    await dp.start_polling(
-        bot
-    )
+    try:
+        await dp.start_polling(bot)
+    finally:
+        await bot.session.close()
 
 
 if __name__ == "__main__":
-
     asyncio.run(main())
