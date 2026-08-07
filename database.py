@@ -1,7 +1,10 @@
 import sqlite3
 
 
-connection = sqlite3.connect("stories.db", check_same_thread=False)
+connection = sqlite3.connect(
+    "stories.db",
+    check_same_thread=False
+)
 
 cursor = connection.cursor()
 
@@ -12,24 +15,10 @@ CREATE TABLE IF NOT EXISTS stories (
     user_id INTEGER,
     text TEXT,
     post_text TEXT,
-    status TEXT DEFAULT 'draft',
+    status TEXT DEFAULT 'waiting',
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 )
 """)
-
-
-connection.commit()
-
-
-# Проверяем, есть ли новые столбцы
-cursor.execute("PRAGMA table_info(stories)")
-columns = [column[1] for column in cursor.fetchall()]
-
-if "post_text" not in columns:
-    cursor.execute("ALTER TABLE stories ADD COLUMN post_text TEXT")
-
-if "status" not in columns:
-    cursor.execute("ALTER TABLE stories ADD COLUMN status TEXT DEFAULT 'draft'")
 
 connection.commit()
 
@@ -87,8 +76,22 @@ def publish_story(story_id: int):
     cursor.execute(
         """
         UPDATE stories
-        SET status='published'
-        WHERE id=?
+        SET status = 'published'
+        WHERE id = ?
+        """,
+        (story_id,)
+    )
+
+    connection.commit()
+
+
+def reject_story(story_id: int):
+
+    cursor.execute(
+        """
+        UPDATE stories
+        SET status = 'rejected'
+        WHERE id = ?
         """,
         (story_id,)
     )
@@ -99,7 +102,35 @@ def publish_story(story_id: int):
 def get_all_stories():
 
     cursor.execute(
-        "SELECT * FROM stories ORDER BY id DESC"
+        """
+        SELECT *
+        FROM stories
+        ORDER BY id DESC
+        """
     )
 
     return cursor.fetchall()
+
+
+def get_stats():
+
+    cursor.execute(
+        "SELECT COUNT(*) FROM stories"
+    )
+    total = cursor.fetchone()[0]
+
+    cursor.execute(
+        "SELECT COUNT(*) FROM stories WHERE status='published'"
+    )
+    published = cursor.fetchone()[0]
+
+    cursor.execute(
+        "SELECT COUNT(*) FROM stories WHERE status='rejected'"
+    )
+    rejected = cursor.fetchone()[0]
+
+    return {
+        "total": total,
+        "published": published,
+        "rejected": rejected
+    }
