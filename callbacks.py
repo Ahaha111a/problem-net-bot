@@ -1,8 +1,8 @@
 from aiogram import Router, F
 from aiogram.types import CallbackQuery
 from aiogram.fsm.context import FSMContext
-from states import StoryState
 
+from states import StoryState
 from database import get_post, publish_story
 from config import CHANNEL_ID
 
@@ -26,30 +26,23 @@ async def publish_callback(callback: CallbackQuery):
         )
         return
 
-
     if len(post_text.strip()) < 50:
+        await callback.answer(
+            "❌ Пост слишком короткий",
+            show_alert=True
+        )
+        return
 
-    await callback.answer(
-        "❌ Пост слишком короткий",
-        show_alert=True
+    await callback.bot.send_message(
+        CHANNEL_ID,
+        post_text
     )
 
-    return
-
-
-await callback.bot.send_message(
-    CHANNEL_ID,
-    post_text
-)
-
-
     publish_story(story_id)
-
 
     await callback.message.answer(
         "✅ Пост опубликован в канал"
     )
-
 
     await callback.answer()
 
@@ -61,11 +54,9 @@ async def reject_callback(callback: CallbackQuery):
         callback.data.split(":")[1]
     )
 
-
     await callback.message.answer(
         f"❌ История #{story_id} отклонена"
     )
-
 
     await callback.answer()
 
@@ -88,10 +79,8 @@ async def edit_callback(
         StoryState.waiting_for_edit
     )
 
-
     await callback.message.answer(
         "✏️ Отправьте новый текст поста."
     )
-
 
     await callback.answer()
