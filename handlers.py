@@ -9,6 +9,7 @@ from database import (
     save_story,
     save_post,
     get_stats,
+    get_waiting_stories,
 )
 from ai import analyze_story
 from post_generator import create_post
@@ -51,6 +52,36 @@ async def help_command(message: Message):
     )
 
 
+@router.message(F.text == "⏳ Модерация")
+async def moderation_list(message: Message):
+
+    if message.from_user.id != ADMIN_ID:
+        return
+
+    stories = get_waiting_stories()
+
+    if not stories:
+        await message.answer(
+            "🟢 Нет историй на модерации."
+        )
+        return
+
+
+    text = "⏳ <b>Истории на модерации:</b>\n\n"
+
+    for story in stories[:10]:
+
+        text += (
+            f"#{story[0]}\n"
+            f"{story[1][:200]}...\n\n"
+        )
+
+
+    await message.answer(
+        text,
+        parse_mode="HTML"
+    )
+
 @router.message(F.text == "👨‍💼 Админ-панель")
 async def admin_panel(message: Message):
 
@@ -63,7 +94,8 @@ async def admin_panel(message: Message):
     )
 
 
-@router.message(F.text == "⬅️ Назад")
+@router.messa
+ge(F.text == "⬅️ Назад")
 async def back_to_main(message: Message):
 
     await message.answer(
