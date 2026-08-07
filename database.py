@@ -140,3 +140,17 @@ def get_stats():
         "rejected": rejected,
         "waiting": waiting
     }
+
+
+def get_waiting_stories():
+
+    cursor.execute(
+        """
+        SELECT id, text, created_at
+        FROM stories
+        WHERE status='waiting'
+        ORDER BY id DESC
+        """
+    )
+
+    return cursor.fetchall()
