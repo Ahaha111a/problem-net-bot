@@ -1,108 +1,238 @@
 import sqlite3
 from datetime import datetime
-from config import config
+
+from config import DB_PATH
+
+
+def get_connection():
+    connection = sqlite3.connect(DB_PATH)
+    connection.row_factory = sqlite3.Row
+    return connection
+
 
 def init_db():
-    conn = sqlite3.connect(config.db_path)
-    cursor = conn.cursor()
+    connection = get_connection()
+
+    cursor = connection.cursor()
+
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS stories (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id INTEGER,
-            text TEXT,
+            user_id INTEGER NOT NULL,
+            text TEXT NOT NULL,
+            ai_result TEXT,
             post_text TEXT,
-            status TEXT DEFAULT 'waiting',
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            status TEXT NOT NULL DEFAULT 'waiting',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            published_at TIMESTAMP
         )
     """)
-    try:
-        cursor.execute("ALTER TABLE stories ADD COLUMN published_at TIMESTAMP")
-    except:
-        pass
-    try:
-        cursor.execute("ALTER TABLE stories ADD COLUMN ai_result TEXT")
-    except:
-        pass
-    conn.commit()
-    conn.close()
+
+    connection.commit()
+    connection.close()
 
 
-async def save_story(story_id: int, post_text: str = None):
-    conn = sqlite3.connect(config.db_path)
-    cursor = conn.cursor()
-    if post_text:
-        cursor.execute("""
-            UPDATE stories 
-            SET post_text = ?, status = 'published', published_at = CURRENT_TIMESTAMP 
-            WHERE id = ?
-        """, (post_text, story_id))
-    else:
-        cursor.execute("UPDATE stories SET status = 'waiting' WHERE id = ?", (story_id,))
-    conn.commit()
-    conn.close()
+def create_story(user_id: int, text: str):
+    connection = get_connection()
+
+    cursor = connection.cursor()
+
+    cursor.execute(
+        """
+        INSERT INTO stories (
+            user_id,
+            text,
+            status
+        )
+        VALUES (?, ?, 'waiting')
+        """,
+        (user_id, text)
+    )
+
+    story_id = cursor.lastrowid
+
+    connection.commit()
+    connection.close()
+
+    return story_id
 
 
-async def publish_story(story_id: int):
-    conn = sqlite3.connect(config.db_path)
-    cursor = conn.cursor()
-    cursor.execute("UPDATE stories SET status = 'published', published_at = CURRENT_TIMESTAMP WHERE id = ?", (story_id,))
-    conn.commit()
-    conn.close()
+def get_story(story_id: int):
+    connection = get_connection()
+
+    cursor = connection.cursor()
+
+    cursor.execute(
+        """
+        SELECT *
+        FROM stories
+        WHERE id = ?
+        """,
+        (story_id,)
+    )
+
+    story = cursor.fetchone()
+
+    connection.close()
+
+    return story
 
 
-async def reject_story(story_id: int):
-    conn = sqlite3.connect(config.db_path)
-    cursor = conn.cursor()
-    cursor.execute("UPDATE stories SET status = 'rejected' WHERE id = ?", (story_id,))
-    conn.commit()
-    conn.close()
+def update_ai_result(story_id: int, ai_result: str):
+    connection = get_connection()
+
+    cursor = connection.cursor()
+
+    cursor.execute(
+        """
+        UPDATE stories
+        SET ai_result = ?
+        WHERE id = ?
+        """,
+        (ai_result, story_id)
+    )
+
+    connection.commit()
+    connection.close()
 
 
-async def get_story_by_id(story_id: int):
-    conn = sqlite3.connect(config.db_path)
-    cursor = conn.cursor()
-    cursor.execute("""
-        SELECT id, user_id, text, post_text, status, created_at, published_at 
-        FROM stories WHERE id = ?
-    """, (story_id,))
-    row = cursor.fetchone()
-    conn.close()
-    if row:
-        return {
-            "id": row[0],
-            "user_id": row[1],
-            "text": row[2],
-            "post_text": row[3],
-            "status": row[4],
-            "created_at": row[5],
-            "published_at": row[6]
-        }
-    return None
+def update_post(story_id: int, post_text: str):
+    connection = get_connection()
+
+    cursor = connection.cursor()
+
+    cursor.execute(
+        """
+        UPDATE stories
+        SET post_text = ?
+        WHERE id = ?
+        """,
+        (post_text, story_id)
+    )
+
+    connection.commit()
+    connection.close()
 
 
-async def get_all_stories():
-    conn = sqlite3.connect(config.db_path)
-    cursor = conn.cursor()
-    cursor.execute("SELECT id, user_id, text, post_text, status, created_at, published_at FROM stories")
-    rows = cursor.fetchall()
-    conn.close()
-    return [{"id": r[0], "user_id": r[1], "text": r[2], "post_text": r[3],
-             "status": r[4], "created_at": r[5], "published_at": r[6]} for r in rows]
+def get_waiting_stories():
+    connection = get_connection()
+
+    cursor = connection.cursor()
+
+    cursor.execute(
+        """
+        SELECT *
+        FROM stories
+        WHERE status = 'waiting'
+        ORDER BY id DESC
+        """
+    )
+
+    stories = cursor.fetchall()
+
+    connection.close()
+
+    return stories
 
 
-async def get_stats():
-    conn = sqlite3.connect(config.db_path)
-    cursor = conn.cursor()
-    cursor.execute("SELECT COUNT(*) FROM stories")
-    total = cursor.fetchone()[0]
-    cursor.execute("SELECT COUNT(*) FROM stories WHERE status = 'published'")
-    published = cursor.fetchone()[0]
-    cursor.execute("SELECT COUNT(*) FROM stories WHERE status = 'rejected'")
-    rejected = cursor.fetchone()[0]
-    conn.close()
+def publish_story(story_id: int):
+    connection = get_connection()
+
+    cursor = connection.cursor()
+
+    cursor.execute(
+        """
+        UPDATE stories
+        SET status = 'published',
+            published_at = ?
+        WHERE id = ?
+        """,
+        (datetime.now(), story_id)
+    )
+
+    connection.commit()
+    connection.close()
+
+
+def reject_story(story_id: int):
+    connection = get_connection()
+
+    cursor = connection.cursor()
+
+    cursor.execute(
+        """
+        UPDATE stories
+        SET status = 'rejected'
+        WHERE id = ?
+        """,
+        (story_id,)
+    )
+
+    connection.commit()
+    connection.close()
+
+
+def get_all_stories():
+    connection = get_connection()
+
+    cursor = connection.cursor()
+
+    cursor.execute(
+        """
+        SELECT *
+        FROM stories
+        ORDER BY id DESC
+        """
+    )
+
+    stories = cursor.fetchall()
+
+    connection.close()
+
+    return stories
+
+
+def get_stats():
+    connection = get_connection()
+
+    cursor = connection.cursor()
+
+    cursor.execute(
+        """
+        SELECT
+            COUNT(*) AS total,
+            SUM(
+                CASE
+                    WHEN status = 'waiting'
+                    THEN 1
+                    ELSE 0
+                END
+            ) AS waiting,
+            SUM(
+                CASE
+                    WHEN status = 'published'
+                    THEN 1
+                    ELSE 0
+                END
+            ) AS published,
+            SUM(
+                CASE
+                    WHEN status = 'rejected'
+                    THEN 1
+                    ELSE 0
+                END
+            ) AS rejected
+        FROM stories
+        """
+    )
+
+    stats = cursor.fetchone()
+
+    connection.close()
+
     return {
-        "total": total,
-        "published": published,
-        "rejected": rejected,
-        "waiting": total - published - rejected
+        "total": stats["total"] or 0,
+        "waiting": stats["waiting"] or 0,
+        "published": stats["published"] or 0,
+        "rejected": stats["rejected"] or 0,
     }
