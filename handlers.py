@@ -94,8 +94,7 @@ async def admin_panel(message: Message):
     )
 
 
-@router.messa
-ge(F.text == "⬅️ Назад")
+@router.message(F.text == "⬅️ Назад")
 async def back_to_main(message: Message):
 
     await message.answer(
