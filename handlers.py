@@ -12,7 +12,11 @@ from database import (
 )
 from ai import analyze_story
 from post_generator import create_post
-from keyboards import main_keyboard, moderation_keyboard
+from keyboards import (
+    main_keyboard,
+    moderation_keyboard,
+    admin_keyboard,
+)1
 
 
 router = Router()
@@ -46,6 +50,45 @@ async def help_command(message: Message):
         "Спасибо за доверие 💙"
     )
 
+
+@router.message(F.text == "👨‍💼 Админ-панель")
+async def admin_panel(message: Message):
+
+    if message.from_user.id != ADMIN_ID:
+        return
+
+    await message.answer(
+        "👨‍💼 Панель администратора",
+        reply_markup=admin_keyboard
+    )
+
+
+@router.message(F.text == "⬅️ Назад")
+async def back_to_main(message: Message):
+
+    await message.answer(
+        "Главное меню",
+        reply_markup=main_keyboard
+        )
+
+
+@router.message(F.text == "📊 Статистика")
+async def admin_stats(message: Message):
+
+    if message.from_user.id != ADMIN_ID:
+        return
+
+    stats = get_stats()
+
+    await message.answer(
+        f"📊 <b>Статистика проекта</b>\n\n"
+        f"📝 Всего историй: {stats['total']}\n"
+        f"✅ Опубликовано: {stats['published']}\n"
+        f"❌ Отклонено: {stats['rejected']}\n"
+        f"🟡 На модерации: {stats['waiting']}",
+        parse_mode="HTML"
+    )
+    
 
 @router.message(Command("stats"))
 async def stats_command(message: Message):
