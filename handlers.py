@@ -67,20 +67,18 @@ async def moderation_list(message: Message):
         return
 
 
-    text = "⏳ <b>Истории на модерации:</b>\n\n"
-
     for story in stories[:10]:
 
-        text += (
-            f"#{story[0]}\n"
-            f"{story[1][:200]}...\n\n"
+        await message.answer(
+            f"⏳ <b>История #{story[0]}</b>\n\n"
+            f"{story[1]}\n\n"
+            f"📅 {story[2]}",
+            parse_mode="HTML",
+            reply_markup=moderation_keyboard(
+                story[0]
+            )
         )
 
-
-    await message.answer(
-        text,
-        parse_mode="HTML"
-    )
 
 @router.message(F.text == "👨‍💼 Админ-панель")
 async def admin_panel(message: Message):
