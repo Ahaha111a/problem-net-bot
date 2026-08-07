@@ -6,6 +6,8 @@ from aiogram.types import (
 )
 
 
+# Главное меню
+
 main_keyboard = ReplyKeyboardMarkup(
     keyboard=[
         [
@@ -17,6 +19,9 @@ main_keyboard = ReplyKeyboardMarkup(
         ],
         [
             KeyboardButton(text="❤️ Поддержка")
+        ],
+        [
+            KeyboardButton(text="👨‍💼 Админ-панель")
         ]
     ],
     resize_keyboard=True,
@@ -24,9 +29,32 @@ main_keyboard = ReplyKeyboardMarkup(
 )
 
 
+# Панель администратора
+
+admin_keyboard = ReplyKeyboardMarkup(
+    keyboard=[
+        [
+            KeyboardButton(text="📊 Статистика"),
+            KeyboardButton(text="⏳ Модерация")
+        ],
+        [
+            KeyboardButton(text="📁 Все истории"),
+            KeyboardButton(text="📢 Последний пост")
+        ],
+        [
+            KeyboardButton(text="⬅️ Назад")
+        ]
+    ],
+    resize_keyboard=True,
+    input_field_placeholder="Панель администратора"
+)
+
+
+# Кнопки модерации
+
 def moderation_keyboard(story_id: int):
 
-    return InlineKeyboardMarkup(
+    keyboard = InlineKeyboardMarkup(
         inline_keyboard=[
             [
                 InlineKeyboardButton(
@@ -48,3 +76,5 @@ def moderation_keyboard(story_id: int):
             ]
         ]
     )
+
+    return keyboard
