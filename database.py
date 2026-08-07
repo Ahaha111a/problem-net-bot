@@ -129,8 +129,14 @@ def get_stats():
     )
     rejected = cursor.fetchone()[0]
 
+    cursor.execute(
+        "SELECT COUNT(*) FROM stories WHERE status='waiting'"
+    )
+    waiting = cursor.fetchone()[0]
+
     return {
         "total": total,
         "published": published,
-        "rejected": rejected
+        "rejected": rejected,
+        "waiting": waiting
     }
