@@ -154,13 +154,3 @@ async def edit_post(
 
 
     await state.clear()
-    @router.message(Command("help"))
-async def help_command(message: Message):
-
-    await message.answer(
-        "💡 Как пользоваться ботом:\n\n"
-        "1️⃣ Нажмите «📝 Поделиться историей».\n"
-        "2️⃣ Напишите, что вас беспокоит.\n"
-        "3️⃣ История будет обработана анонимно.\n\n"
-        "Спасибо, что доверяете нам 💙"
-    )
