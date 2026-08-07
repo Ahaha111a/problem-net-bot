@@ -5,7 +5,11 @@ from aiogram.filters import Command
 
 from states import StoryState
 from config import ADMIN_ID
-from database import save_story, save_post
+from database import (
+    save_story,
+    save_post,
+    get_stats,
+)
 from ai import analyze_story
 from post_generator import create_post
 from keyboards import main_keyboard, moderation_keyboard
@@ -40,6 +44,24 @@ async def help_command(message: Message):
         "2️⃣ Напишите свою историю.\n"
         "3️⃣ Бот подготовит материал для публикации.\n\n"
         "Спасибо за доверие 💙"
+    )
+
+
+@router.message(Command("stats"))
+async def stats_command(message: Message):
+
+    if message.from_user.id != ADMIN_ID:
+        return
+
+    stats = get_stats()
+
+    await message.answer(
+        f"📊 <b>Статистика проекта</b>\n\n"
+        f"📝 Всего историй: {stats['total']}\n"
+        f"✅ Опубликовано: {stats['published']}\n"
+        f"❌ Отклонено: {stats['rejected']}\n"
+        f"🟡 На модерации: {stats['waiting']}",
+        parse_mode="HTML"
     )
 
 
