@@ -56,7 +56,6 @@ async def start_command(message: Message):
         reply_markup=main_keyboard,
     )
 
-    # Показываем админскую кнопку только администратору
     if is_admin(message.from_user.id):
         await message.answer(
             "👨‍💼 Вы вошли как администратор.\n"
@@ -131,7 +130,6 @@ async def receive_story(
         )
         return
 
-    # Сохраняем историю
     story_id = create_story(
         user_id=message.from_user.id,
         text=story,
@@ -142,7 +140,7 @@ async def receive_story(
     )
 
     # =====================================================
-    # ИИ
+    # АНАЛИЗ ИИ
     # =====================================================
 
     try:
@@ -192,22 +190,23 @@ async def receive_story(
     )
 
     # =====================================================
-    # АДМИНУ
+    # СООБЩЕНИЕ МОДЕРАТОРУ
     # =====================================================
 
     moderation_text = (
-    f"📥 <b>Новая история #{story_id}</b>\n"
-    f"👤 <b>User ID:</b> <code>{message.from_user.id}</code>\n\n"
-    "🔒 История отправлена анонимно.\n\n"
-    "💭 <b>Текст:</b>\n\n"
-    f"{story}\n\n"
-    "━━━━━━━━━━━━━━\n\n"
-    "🤖 <b>Анализ ИИ:</b>\n\n"
-    f"{ai_result}\n\n"
-    "━━━━━━━━━━━━━━\n\n"
-    "📌 <b>Готовый пост:</b>\n\n"
-    f"{post_text}"
-)
+        f"📥 <b>Новая история #{story_id}</b>\n\n"
+        f"👤 <b>User ID:</b> "
+        f"<code>{message.from_user.id}</code>\n\n"
+        "🔒 История отправлена анонимно.\n\n"
+        "💭 <b>Текст:</b>\n\n"
+        f"{story}\n\n"
+        "━━━━━━━━━━━━━━\n\n"
+        "🤖 <b>Анализ ИИ:</b>\n\n"
+        f"{ai_result}\n\n"
+        "━━━━━━━━━━━━━━\n\n"
+        "📌 <b>Готовый пост:</b>\n\n"
+        f"{post_text}"
+    )
 
     for admin_id in ADMIN_IDS:
 
@@ -217,7 +216,8 @@ async def receive_story(
                 admin_id,
                 moderation_text,
                 reply_markup=moderation_keyboard(
-                    story_id
+                    story_id,
+                    message.from_user.id,
                 ),
                 parse_mode="HTML",
             )
@@ -229,7 +229,7 @@ async def receive_story(
             )
 
     # =====================================================
-    # ПОЛЬЗОВАТЕЛЮ
+    # ОТВЕТ ПОЛЬЗОВАТЕЛЮ
     # =====================================================
 
     await message.answer(
@@ -302,10 +302,13 @@ async def moderation(
 
         await message.answer(
             f"📥 <b>История #{story['id']}</b>\n\n"
+            f"👤 User ID: "
+            f"<code>{story['user_id']}</code>\n\n"
             f"{story['text']}",
             parse_mode="HTML",
             reply_markup=moderation_keyboard(
-                story["id"]
+                story["id"],
+                story["user_id"],
             ),
         )
 
@@ -401,15 +404,7 @@ async def back(
 
     await state.clear()
 
-    if is_admin(
-        message.from_user.id
-    ):
-        await message.answer(
-            "↩️ Главное меню",
-            reply_markup=main_keyboard,
-        )
-    else:
-        await message.answer(
-            "↩️ Главное меню",
-            reply_markup=main_keyboard,
-        )
+    await message.answer(
+        "↩️ Главное меню",
+        reply_markup=main_keyboard,
+    )
