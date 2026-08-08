@@ -5,3 +5,4 @@ class StoryState(StatesGroup):
     waiting_for_story = State()
     waiting_for_edit = State()
     waiting_for_contact_message = State()
+    waiting_for_support_reply = State()
