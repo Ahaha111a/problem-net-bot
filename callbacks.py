@@ -2,7 +2,7 @@ from aiogram import Router, F
 from aiogram.types import CallbackQuery, Message
 from aiogram.fsm.context import FSMContext
 
-from config import ADMIN_IDS, CHANNEL_ID
+from config import ADMIN_IDS
 
 from database import (
     get_story,
@@ -12,7 +12,6 @@ from database import (
 )
 
 from states import StoryState
-
 from keyboards import moderation_keyboard
 
 
@@ -28,6 +27,26 @@ def is_admin(user_id: int) -> bool:
 
 
 # =========================================================
+# ОБЩАЯ ЗАЩИТА CALLBACK
+# =========================================================
+
+async def check_admin(
+    callback: CallbackQuery,
+) -> bool:
+
+    if not is_admin(
+        callback.from_user.id
+    ):
+        await callback.answer(
+            "⛔ У вас нет доступа.",
+            show_alert=True,
+        )
+        return False
+
+    return True
+
+
+# =========================================================
 # ОПУБЛИКОВАТЬ
 # =========================================================
 
@@ -35,14 +54,10 @@ def is_admin(user_id: int) -> bool:
     F.data.startswith("publish:")
 )
 async def publish_handler(
-    callback: CallbackQuery
+    callback: CallbackQuery,
 ):
 
-    if not is_admin(callback.from_user.id):
-        await callback.answer(
-            "⛔ Нет доступа.",
-            show_alert=True,
-        )
+    if not await check_admin(callback):
         return
 
     try:
@@ -50,6 +65,7 @@ async def publish_handler(
             callback.data.split(":")[1]
         )
     except (ValueError, IndexError):
+
         await callback.answer(
             "❌ Некорректный ID истории.",
             show_alert=True,
@@ -59,17 +75,19 @@ async def publish_handler(
     story = get_story(story_id)
 
     if not story:
+
         await callback.answer(
             "❌ История не найдена.",
             show_alert=True,
         )
         return
 
-    post_text = story["post_text"]
+    post_text = story.get("post_text")
 
     if not post_text:
+
         await callback.answer(
-            "❌ У истории нет готового поста.",
+            "❌ Готовый пост отсутствует.",
             show_alert=True,
         )
         return
@@ -77,7 +95,7 @@ async def publish_handler(
     try:
 
         await callback.bot.send_message(
-            chat_id=CHANNEL_ID,
+            chat_id=callback.message.chat.id,
             text=post_text,
         )
 
@@ -88,11 +106,7 @@ async def publish_handler(
         )
 
         await callback.answer(
-            "✅ История опубликована!"
-        )
-
-        await callback.message.answer(
-            f"✅ История #{story_id} опубликована в канале."
+            "✅ Опубликовано!"
         )
 
     except Exception as error:
@@ -102,7 +116,7 @@ async def publish_handler(
         )
 
         await callback.answer(
-            "❌ Не удалось опубликовать историю.",
+            "❌ Ошибка публикации.",
             show_alert=True,
         )
 
@@ -115,14 +129,10 @@ async def publish_handler(
     F.data.startswith("reject:")
 )
 async def reject_handler(
-    callback: CallbackQuery
+    callback: CallbackQuery,
 ):
 
-    if not is_admin(callback.from_user.id):
-        await callback.answer(
-            "⛔ Нет доступа.",
-            show_alert=True,
-        )
+    if not await check_admin(callback):
         return
 
     try:
@@ -130,6 +140,7 @@ async def reject_handler(
             callback.data.split(":")[1]
         )
     except (ValueError, IndexError):
+
         await callback.answer(
             "❌ Некорректный ID истории.",
             show_alert=True,
@@ -139,6 +150,7 @@ async def reject_handler(
     story = get_story(story_id)
 
     if not story:
+
         await callback.answer(
             "❌ История не найдена.",
             show_alert=True,
@@ -157,10 +169,6 @@ async def reject_handler(
             "❌ История отклонена."
         )
 
-        await callback.message.answer(
-            f"❌ История #{story_id} отклонена."
-        )
-
     except Exception as error:
 
         print(
@@ -168,7 +176,7 @@ async def reject_handler(
         )
 
         await callback.answer(
-            "❌ Не удалось отклонить историю.",
+            "❌ Ошибка при отклонении.",
             show_alert=True,
         )
 
@@ -185,11 +193,7 @@ async def edit_handler(
     state: FSMContext,
 ):
 
-    if not is_admin(callback.from_user.id):
-        await callback.answer(
-            "⛔ Нет доступа.",
-            show_alert=True,
-        )
+    if not await check_admin(callback):
         return
 
     try:
@@ -197,6 +201,7 @@ async def edit_handler(
             callback.data.split(":")[1]
         )
     except (ValueError, IndexError):
+
         await callback.answer(
             "❌ Некорректный ID истории.",
             show_alert=True,
@@ -206,6 +211,7 @@ async def edit_handler(
     story = get_story(story_id)
 
     if not story:
+
         await callback.answer(
             "❌ История не найдена.",
             show_alert=True,
@@ -224,12 +230,12 @@ async def edit_handler(
 
     await callback.message.answer(
         f"✏️ Редактирование истории #{story_id}\n\n"
-        "Отправь новый текст готового поста."
+        "Отправьте новый текст поста."
     )
 
 
 # =========================================================
-# СОХРАНЕНИЕ ОТРЕДАКТИРОВАННОГО ПОСТА
+# СОХРАНЕНИЕ РЕДАКТИРОВАНИЯ
 # =========================================================
 
 @callback_router.message(
@@ -240,16 +246,25 @@ async def save_edited_post(
     state: FSMContext,
 ):
 
-    if not is_admin(message.from_user.id):
+    if not is_admin(
+        message.from_user.id
+    ):
         await state.clear()
+
+        await message.answer(
+            "⛔ У вас нет доступа."
+        )
+
         return
 
     new_text = message.text
 
     if not new_text:
+
         await message.answer(
-            "❗ Отправь текстовое сообщение."
+            "❗ Отправьте текстовое сообщение."
         )
+
         return
 
     data = await state.get_data()
@@ -259,21 +274,11 @@ async def save_edited_post(
     )
 
     if not story_id:
+
         await state.clear()
 
         await message.answer(
-            "❌ Не удалось определить историю."
-        )
-
-        return
-
-    story = get_story(story_id)
-
-    if not story:
-        await state.clear()
-
-        await message.answer(
-            "❌ История не найдена."
+            "❌ История не определена."
         )
 
         return
@@ -288,18 +293,8 @@ async def save_edited_post(
         await state.clear()
 
         await message.answer(
-            f"✅ Пост истории #{story_id} обновлён.\n\n"
-            "Теперь его можно опубликовать."
-        )
-
-        # Показываем администратору обновлённый пост
-        await message.answer(
-            f"📌 <b>Новый вариант поста:</b>\n\n"
-            f"{new_text}",
-            parse_mode="HTML",
-            reply_markup=moderation_keyboard(
-                story_id
-            ),
+            f"✅ Пост истории #{story_id} "
+            "успешно изменён."
         )
 
     except Exception as error:
