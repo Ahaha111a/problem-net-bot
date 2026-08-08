@@ -426,7 +426,7 @@ async def send_contact_message(
         await message.bot.send_message(
             chat_id=user_id,
             text=(
-                "💬 Сообщение от команды: /n"        
+                "💬 Сообщение от команды:/n/n"        
                 f"{message.text}"
             ),
         )
