@@ -424,11 +424,11 @@ async def send_contact_message(
     try:
 
         await message.bot.send_message(
-            chat_id=user_id,
-            text=(
-                "💬 Сообщение от команды:/n/n"        
-                f"{message.text}"
-            ),
+    chat_id=user_id,
+    text=(
+        "💬 Сообщение от команды:\n\n"
+        f"{message.text}"
+    ),
         )
 
         await state.clear()
