@@ -196,17 +196,18 @@ async def receive_story(
     # =====================================================
 
     moderation_text = (
-        f"📥 <b>Новая история #{story_id}</b>\n\n"
-        "🔒 История отправлена анонимно.\n\n"
-        "💭 <b>Текст:</b>\n\n"
-        f"{story}\n\n"
-        "━━━━━━━━━━━━━━\n\n"
-        "🤖 <b>Анализ ИИ:</b>\n\n"
-        f"{ai_result}\n\n"
-        "━━━━━━━━━━━━━━\n\n"
-        "📌 <b>Готовый пост:</b>\n\n"
-        f"{post_text}"
-    )
+    f"📥 <b>Новая история #{story_id}</b>\n"
+    f"👤 <b>User ID:</b> <code>{message.from_user.id}</code>\n\n"
+    "🔒 История отправлена анонимно.\n\n"
+    "💭 <b>Текст:</b>\n\n"
+    f"{story}\n\n"
+    "━━━━━━━━━━━━━━\n\n"
+    "🤖 <b>Анализ ИИ:</b>\n\n"
+    f"{ai_result}\n\n"
+    "━━━━━━━━━━━━━━\n\n"
+    "📌 <b>Готовый пост:</b>\n\n"
+    f"{post_text}"
+)
 
     for admin_id in ADMIN_IDS:
 
