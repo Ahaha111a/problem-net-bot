@@ -90,8 +90,8 @@ def moderation_keyboard(story_id: int, user_id: int):
             ],
             [
                 InlineKeyboardButton(
-                    text="👤 Написать пользователю",
-                    url=f"tg://user?id={user_id}",
+    text="👤 Написать пользователю",
+    callback_data=f"contact:{story_id}",
                 ),
             ],
         ]
