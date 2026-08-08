@@ -68,7 +68,7 @@ admin_keyboard = ReplyKeyboardMarkup(
 # КНОПКИ МОДЕРАЦИИ
 # =========================================================
 
-def moderation_keyboard(story_id: int):
+def moderation_keyboard(story_id: int, user_id: int):
 
     return InlineKeyboardMarkup(
         inline_keyboard=[
@@ -86,6 +86,12 @@ def moderation_keyboard(story_id: int):
                 InlineKeyboardButton(
                     text="❌ Отклонить",
                     callback_data=f"reject:{story_id}",
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    text="👤 Написать пользователю",
+                    url=f"tg://user?id={user_id}",
                 ),
             ],
         ]
