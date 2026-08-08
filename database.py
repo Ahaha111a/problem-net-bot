@@ -10,11 +10,15 @@ def get_connection():
     return connection
 
 
+# =========================================================
+# ИНИЦИАЛИЗАЦИЯ БАЗЫ
+# =========================================================
+
 def init_db():
     connection = get_connection()
-
     cursor = connection.cursor()
 
+    # Истории
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS stories (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -28,13 +32,41 @@ def init_db():
         )
     """)
 
+    # Диалоги поддержки
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS support_dialogs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            status TEXT NOT NULL DEFAULT 'open',
+            assigned_admin_id INTEGER,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            last_message TEXT
+        )
+    """)
+
+    # Сообщения диалогов
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS support_messages (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            dialog_id INTEGER NOT NULL,
+            sender_id INTEGER NOT NULL,
+            sender_type TEXT NOT NULL,
+            text TEXT NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+
     connection.commit()
     connection.close()
 
 
+# =========================================================
+# ИСТОРИИ
+# =========================================================
+
 def create_story(user_id: int, text: str):
     connection = get_connection()
-
     cursor = connection.cursor()
 
     cursor.execute(
@@ -59,7 +91,6 @@ def create_story(user_id: int, text: str):
 
 def get_story(story_id: int):
     connection = get_connection()
-
     cursor = connection.cursor()
 
     cursor.execute(
@@ -80,7 +111,6 @@ def get_story(story_id: int):
 
 def update_ai_result(story_id: int, ai_result: str):
     connection = get_connection()
-
     cursor = connection.cursor()
 
     cursor.execute(
@@ -98,7 +128,6 @@ def update_ai_result(story_id: int, ai_result: str):
 
 def update_post(story_id: int, post_text: str):
     connection = get_connection()
-
     cursor = connection.cursor()
 
     cursor.execute(
@@ -116,7 +145,6 @@ def update_post(story_id: int, post_text: str):
 
 def get_waiting_stories():
     connection = get_connection()
-
     cursor = connection.cursor()
 
     cursor.execute(
@@ -137,7 +165,6 @@ def get_waiting_stories():
 
 def publish_story(story_id: int):
     connection = get_connection()
-
     cursor = connection.cursor()
 
     cursor.execute(
@@ -156,7 +183,6 @@ def publish_story(story_id: int):
 
 def reject_story(story_id: int):
     connection = get_connection()
-
     cursor = connection.cursor()
 
     cursor.execute(
@@ -174,7 +200,6 @@ def reject_story(story_id: int):
 
 def get_all_stories():
     connection = get_connection()
-
     cursor = connection.cursor()
 
     cursor.execute(
@@ -194,7 +219,6 @@ def get_all_stories():
 
 def get_stats():
     connection = get_connection()
-
     cursor = connection.cursor()
 
     cursor.execute(
@@ -236,3 +260,215 @@ def get_stats():
         "published": stats["published"] or 0,
         "rejected": stats["rejected"] or 0,
     }
+
+
+# =========================================================
+# ДИАЛОГИ ПОДДЕРЖКИ
+# =========================================================
+
+def get_open_dialog_by_user(user_id: int):
+    connection = get_connection()
+    cursor = connection.cursor()
+
+    cursor.execute(
+        """
+        SELECT *
+        FROM support_dialogs
+        WHERE user_id = ?
+          AND status = 'open'
+        ORDER BY id DESC
+        LIMIT 1
+        """,
+        (user_id,)
+    )
+
+    dialog = cursor.fetchone()
+
+    connection.close()
+
+    return dialog
+
+
+def create_support_dialog(user_id: int, first_message: str):
+    connection = get_connection()
+    cursor = connection.cursor()
+
+    cursor.execute(
+        """
+        INSERT INTO support_dialogs (
+            user_id,
+            status,
+            last_message
+        )
+        VALUES (?, 'open', ?)
+        """,
+        (user_id, first_message)
+    )
+
+    dialog_id = cursor.lastrowid
+
+    cursor.execute(
+        """
+        INSERT INTO support_messages (
+            dialog_id,
+            sender_id,
+            sender_type,
+            text
+        )
+        VALUES (?, ?, 'user', ?)
+        """,
+        (
+            dialog_id,
+            user_id,
+            first_message,
+        )
+    )
+
+    connection.commit()
+    connection.close()
+
+    return dialog_id
+
+
+def add_support_message(
+    dialog_id: int,
+    sender_id: int,
+    sender_type: str,
+    text: str,
+):
+    connection = get_connection()
+    cursor = connection.cursor()
+
+    cursor.execute(
+        """
+        INSERT INTO support_messages (
+            dialog_id,
+            sender_id,
+            sender_type,
+            text
+        )
+        VALUES (?, ?, ?, ?)
+        """,
+        (
+            dialog_id,
+            sender_id,
+            sender_type,
+            text,
+        )
+    )
+
+    cursor.execute(
+        """
+        UPDATE support_dialogs
+        SET last_message = ?,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+        """,
+        (
+            text,
+            dialog_id,
+        )
+    )
+
+    connection.commit()
+    connection.close()
+
+
+def get_dialog(dialog_id: int):
+    connection = get_connection()
+    cursor = connection.cursor()
+
+    cursor.execute(
+        """
+        SELECT *
+        FROM support_dialogs
+        WHERE id = ?
+        """,
+        (dialog_id,)
+    )
+
+    dialog = cursor.fetchone()
+
+    connection.close()
+
+    return dialog
+
+
+def get_open_dialogs():
+    connection = get_connection()
+    cursor = connection.cursor()
+
+    cursor.execute(
+        """
+        SELECT *
+        FROM support_dialogs
+        WHERE status = 'open'
+        ORDER BY updated_at DESC, id DESC
+        """
+    )
+
+    dialogs = cursor.fetchall()
+
+    connection.close()
+
+    return dialogs
+
+
+def get_dialog_messages(dialog_id: int):
+    connection = get_connection()
+    cursor = connection.cursor()
+
+    cursor.execute(
+        """
+        SELECT *
+        FROM support_messages
+        WHERE dialog_id = ?
+        ORDER BY id ASC
+        """,
+        (dialog_id,)
+    )
+
+    messages = cursor.fetchall()
+
+    connection.close()
+
+    return messages
+
+
+def assign_dialog(dialog_id: int, admin_id: int):
+    connection = get_connection()
+    cursor = connection.cursor()
+
+    cursor.execute(
+        """
+        UPDATE support_dialogs
+        SET assigned_admin_id = ?,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+        """,
+        (
+            admin_id,
+            dialog_id,
+        )
+    )
+
+    connection.commit()
+    connection.close()
+
+
+def close_dialog(dialog_id: int):
+    connection = get_connection()
+    cursor = connection.cursor()
+
+    cursor.execute(
+        """
+        UPDATE support_dialogs
+        SET status = 'closed',
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+        """,
+        (dialog_id,)
+    )
+
+    connection.commit()
+    connection.close()
