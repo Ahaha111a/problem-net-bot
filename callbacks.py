@@ -29,9 +29,7 @@ async def check_admin(
     callback: CallbackQuery,
 ) -> bool:
 
-    if not is_admin(
-        callback.from_user.id
-    ):
+    if not is_admin(callback.from_user.id):
         await callback.answer(
             "⛔ У вас нет доступа.",
             show_alert=True,
@@ -69,7 +67,7 @@ async def publish_handler(
 
     story = get_story(story_id)
 
-    if not story:
+    if story is None:
 
         await callback.answer(
             "❌ История не найдена.",
@@ -77,7 +75,7 @@ async def publish_handler(
         )
         return
 
-    post_text = story.get("post_text")
+    post_text = story["post_text"]
 
     if not post_text:
 
@@ -144,7 +142,7 @@ async def reject_handler(
 
     story = get_story(story_id)
 
-    if not story:
+    if story is None:
 
         await callback.answer(
             "❌ История не найдена.",
@@ -205,7 +203,7 @@ async def edit_handler(
 
     story = get_story(story_id)
 
-    if not story:
+    if story is None:
 
         await callback.answer(
             "❌ История не найдена.",
@@ -332,7 +330,7 @@ async def contact_user_handler(
 
     story = get_story(story_id)
 
-    if not story:
+    if story is None:
 
         await callback.answer(
             "❌ История не найдена.",
@@ -340,7 +338,9 @@ async def contact_user_handler(
         )
         return
 
-    user_id = story.get("user_id")
+    # sqlite3.Row нужно читать через ["поле"],
+    # а не через .get()
+    user_id = story["user_id"]
 
     if not user_id:
 
