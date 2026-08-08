@@ -687,4 +687,4 @@ async def back(
         await message.answer(
             "↩️ Главное меню",
             reply_markup=main_keyboard,
-        )2
+        )
