@@ -30,10 +30,12 @@ async def check_admin(
 ) -> bool:
 
     if not is_admin(callback.from_user.id):
+
         await callback.answer(
             "⛔ У вас нет доступа.",
             show_alert=True,
         )
+
         return False
 
     return True
@@ -54,15 +56,18 @@ async def publish_handler(
         return
 
     try:
+
         story_id = int(
             callback.data.split(":")[1]
         )
+
     except (ValueError, IndexError):
 
         await callback.answer(
             "❌ Некорректный ID истории.",
             show_alert=True,
         )
+
         return
 
     story = get_story(story_id)
@@ -73,6 +78,7 @@ async def publish_handler(
             "❌ История не найдена.",
             show_alert=True,
         )
+
         return
 
     post_text = story["post_text"]
@@ -83,11 +89,11 @@ async def publish_handler(
             "❌ Готовый пост отсутствует.",
             show_alert=True,
         )
+
         return
 
     try:
 
-        # Публикуем пост
         await callback.bot.send_message(
             chat_id=callback.message.chat.id,
             text=post_text,
@@ -95,10 +101,7 @@ async def publish_handler(
 
         publish_story(story_id)
 
-        # =================================================
-        # УВЕДОМЛЕНИЕ АВТОРУ
-        # =================================================
-
+        # Уведомление автора
         try:
 
             await callback.bot.send_message(
@@ -115,7 +118,6 @@ async def publish_handler(
                 f"USER NOTIFICATION ERROR: {error}"
             )
 
-        # Убираем кнопки модерации
         await callback.message.edit_reply_markup(
             reply_markup=None
         )
@@ -151,15 +153,18 @@ async def reject_handler(
         return
 
     try:
+
         story_id = int(
             callback.data.split(":")[1]
         )
+
     except (ValueError, IndexError):
 
         await callback.answer(
             "❌ Некорректный ID истории.",
             show_alert=True,
         )
+
         return
 
     story = get_story(story_id)
@@ -170,16 +175,14 @@ async def reject_handler(
             "❌ История не найдена.",
             show_alert=True,
         )
+
         return
 
     try:
 
         reject_story(story_id)
 
-        # =================================================
-        # УВЕДОМЛЕНИЕ АВТОРУ
-        # =================================================
-
+        # Уведомление автора
         try:
 
             await callback.bot.send_message(
@@ -196,7 +199,6 @@ async def reject_handler(
                 f"USER NOTIFICATION ERROR: {error}"
             )
 
-        # Убираем кнопки модерации
         await callback.message.edit_reply_markup(
             reply_markup=None
         )
@@ -233,15 +235,18 @@ async def edit_handler(
         return
 
     try:
+
         story_id = int(
             callback.data.split(":")[1]
         )
+
     except (ValueError, IndexError):
 
         await callback.answer(
             "❌ Некорректный ID истории.",
             show_alert=True,
         )
+
         return
 
     story = get_story(story_id)
@@ -252,6 +257,7 @@ async def edit_handler(
             "❌ История не найдена.",
             show_alert=True,
         )
+
         return
 
     await state.update_data(
@@ -282,9 +288,8 @@ async def save_edited_post(
     state: FSMContext,
 ):
 
-    if not is_admin(
-        message.from_user.id
-    ):
+    if not is_admin(message.from_user.id):
+
         await state.clear()
 
         await message.answer(
@@ -345,7 +350,7 @@ async def save_edited_post(
 
 
 # =========================================================
-# НАПИСАТЬ ПОЛЬЗОВАТЕЛЮ
+# НАПИСАТЬ ПОЛЬЗОВАТЕЛЮ ПО ИСТОРИИ
 # =========================================================
 
 @callback_router.callback_query(
@@ -360,15 +365,18 @@ async def contact_user_handler(
         return
 
     try:
+
         story_id = int(
             callback.data.split(":")[1]
         )
+
     except (ValueError, IndexError):
 
         await callback.answer(
             "❌ Некорректный ID истории.",
             show_alert=True,
         )
+
         return
 
     story = get_story(story_id)
@@ -379,6 +387,7 @@ async def contact_user_handler(
             "❌ История не найдена.",
             show_alert=True,
         )
+
         return
 
     user_id = story["user_id"]
@@ -389,6 +398,7 @@ async def contact_user_handler(
             "❌ ID пользователя не найден.",
             show_alert=True,
         )
+
         return
 
     await state.update_data(
@@ -423,9 +433,8 @@ async def send_contact_message(
     state: FSMContext,
 ):
 
-    if not is_admin(
-        message.from_user.id
-    ):
+    if not is_admin(message.from_user.id):
+
         await state.clear()
 
         await message.answer(
@@ -491,4 +500,129 @@ async def send_contact_message(
             "❌ Не удалось отправить сообщение.\n\n"
             "Возможно, пользователь заблокировал бота "
             "или ещё не начал с ним диалог."
+        )
+
+
+# =========================================================
+# ОТВЕТ НА ЗАПРОС ЭКСТРЕННОЙ ПОДДЕРЖКИ
+# =========================================================
+
+@callback_router.callback_query(
+    F.data.startswith("support_reply:")
+)
+async def support_reply_handler(
+    callback: CallbackQuery,
+    state: FSMContext,
+):
+
+    if not await check_admin(callback):
+        return
+
+    try:
+
+        user_id = int(
+            callback.data.split(":")[1]
+        )
+
+    except (ValueError, IndexError):
+
+        await callback.answer(
+            "❌ Некорректный ID пользователя.",
+            show_alert=True,
+        )
+
+        return
+
+    await state.update_data(
+        support_user_id=user_id
+    )
+
+    await state.set_state(
+        StoryState.waiting_for_support_reply
+    )
+
+    await callback.answer()
+
+    await callback.message.answer(
+        f"💬 <b>Ответ пользователю</b>\n\n"
+        f"👤 User ID: <code>{user_id}</code>\n\n"
+        "Напишите сообщение, которое хотите "
+        "отправить пользователю.",
+        parse_mode="HTML",
+    )
+
+
+# =========================================================
+# ОТПРАВИТЬ ОТВЕТ ПОЛЬЗОВАТЕЛЮ
+# =========================================================
+
+@callback_router.message(
+    StoryState.waiting_for_support_reply
+)
+async def send_support_reply(
+    message: Message,
+    state: FSMContext,
+):
+
+    if not is_admin(message.from_user.id):
+
+        await state.clear()
+
+        await message.answer(
+            "⛔ У вас нет доступа."
+        )
+
+        return
+
+    if not message.text:
+
+        await message.answer(
+            "❗ Отправьте текстовое сообщение."
+        )
+
+        return
+
+    data = await state.get_data()
+
+    user_id = data.get(
+        "support_user_id"
+    )
+
+    if not user_id:
+
+        await state.clear()
+
+        await message.answer(
+            "❌ Пользователь не определён."
+        )
+
+        return
+
+    try:
+
+        await message.bot.send_message(
+            chat_id=user_id,
+            text=(
+                "💙 Сообщение от модератора:\n\n"
+                f"{message.text}"
+            ),
+        )
+
+        await state.clear()
+
+        await message.answer(
+            "✅ Ответ отправлен пользователю."
+        )
+
+    except Exception as error:
+
+        print(
+            f"SUPPORT REPLY ERROR: {error}"
+        )
+
+        await state.clear()
+
+        await message.answer(
+            "❌ Не удалось отправить ответ.\n\n"
+            "Возможно, пользователь заблокировал бота."
         )
