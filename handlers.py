@@ -1,5 +1,5 @@
 from aiogram import Router, F
-from aiogram.types import Message
+from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.fsm.context import FSMContext
 from aiogram.filters import Command
 
@@ -57,6 +57,7 @@ async def start_command(message: Message):
     )
 
     if is_admin(message.from_user.id):
+
         await message.answer(
             "👨‍💼 Вы вошли как администратор.\n"
             "Для управления проектом используйте "
@@ -78,8 +79,131 @@ async def help_command(message: Message):
         "2️⃣ Напишите свою историю.\n"
         "3️⃣ Бот подготовит материал для публикации.\n"
         "4️⃣ Администратор проверит материал.\n\n"
+        "Если вам нужна срочная поддержка, "
+        "используйте кнопку «🆘 Экстренная поддержка».\n\n"
         "Спасибо за доверие 💙"
     )
+
+
+# =========================================================
+# ЭКСТРЕННАЯ ПОДДЕРЖКА
+# =========================================================
+
+@router.message(F.text == "🆘 Экстренная поддержка")
+async def emergency_support(
+    message: Message,
+    state: FSMContext,
+):
+
+    await state.clear()
+
+    await state.set_state(
+        StoryState.waiting_for_support_message
+    )
+
+    await message.answer(
+        "🆘 <b>Поддержка</b>\n\n"
+        "Если вам сейчас очень тяжело или вам "
+        "нужна помощь, расскажите нам, что происходит.\n\n"
+        "Ваше сообщение будет передано модератору. "
+        "Вы сможете продолжить диалог через бота.\n\n"
+        "⚠️ Если вы находитесь в непосредственной опасности, "
+        "обратитесь в местные экстренные службы.\n\n"
+        "Напишите сообщение ниже.",
+        parse_mode="HTML",
+    )
+
+
+# =========================================================
+# ПОЛУЧЕНИЕ СООБЩЕНИЯ ПОДДЕРЖКИ
+# =========================================================
+
+@router.message(
+    StoryState.waiting_for_support_message
+)
+async def receive_support_message(
+    message: Message,
+    state: FSMContext,
+):
+
+    support_text = message.text
+
+    if not support_text:
+
+        await message.answer(
+            "❗ Пожалуйста, отправьте сообщение обычным текстом."
+        )
+        return
+
+    support_text = support_text.strip()
+
+    if len(support_text) < 2:
+
+        await message.answer(
+            "✏️ Напишите немного подробнее, "
+            "чтобы модератор смог вам ответить."
+        )
+        return
+
+    user_id = message.from_user.id
+
+    support_keyboard = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="💬 Ответить",
+                    callback_data=f"support_reply:{user_id}",
+                )
+            ]
+        ]
+    )
+
+    support_message = (
+        "🆘 <b>ЗАПРОС НА ПОДДЕРЖКУ</b>\n\n"
+        f"👤 <b>User ID:</b> "
+        f"<code>{user_id}</code>\n\n"
+        "💬 <b>Сообщение:</b>\n\n"
+        f"{support_text}"
+    )
+
+    sent_to_admin = False
+
+    for admin_id in ADMIN_IDS:
+
+        try:
+
+            await message.bot.send_message(
+                admin_id,
+                support_message,
+                reply_markup=support_keyboard,
+                parse_mode="HTML",
+            )
+
+            sent_to_admin = True
+
+        except Exception as error:
+
+            print(
+                f"SUPPORT ADMIN SEND ERROR: {error}"
+            )
+
+    if sent_to_admin:
+
+        await message.answer(
+            "💙 Ваше сообщение передано модератору.\n\n"
+            "Ожидайте ответа. Когда модератор ответит, "
+            "вы получите сообщение прямо здесь."
+        )
+
+    else:
+
+        await message.answer(
+            "❌ Сейчас не удалось передать сообщение "
+            "модератору.\n\n"
+            "Попробуйте немного позже."
+        )
+
+    await state.clear()
 
 
 # =========================================================
@@ -116,6 +240,7 @@ async def receive_story(
     story = message.text
 
     if not story:
+
         await message.answer(
             "❗ Отправьте историю обычным текстовым сообщением."
         )
@@ -124,6 +249,7 @@ async def receive_story(
     story = story.strip()
 
     if len(story) < 10:
+
         await message.answer(
             "✏️ История слишком короткая.\n\n"
             "Напишите немного подробнее."
