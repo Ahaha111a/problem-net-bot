@@ -27,8 +27,8 @@ main_keyboard = ReplyKeyboardMarkup(
         ],
         [
             KeyboardButton(
-                text="❤️ Поддержка"
-            ),
+    text="🆘 Экстренная поддержка"
+),
         ],
     ],
     resize_keyboard=True,
