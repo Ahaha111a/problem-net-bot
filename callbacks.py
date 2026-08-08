@@ -87,6 +87,7 @@ async def publish_handler(
 
     try:
 
+        # Публикуем пост
         await callback.bot.send_message(
             chat_id=callback.message.chat.id,
             text=post_text,
@@ -94,6 +95,27 @@ async def publish_handler(
 
         publish_story(story_id)
 
+        # =================================================
+        # УВЕДОМЛЕНИЕ АВТОРУ
+        # =================================================
+
+        try:
+
+            await callback.bot.send_message(
+                chat_id=story["user_id"],
+                text=(
+                    "🎉 Ваша история была опубликована!\n\n"
+                    "Спасибо, что поделились ей с нами 💙"
+                ),
+            )
+
+        except Exception as error:
+
+            print(
+                f"USER NOTIFICATION ERROR: {error}"
+            )
+
+        # Убираем кнопки модерации
         await callback.message.edit_reply_markup(
             reply_markup=None
         )
@@ -154,6 +176,27 @@ async def reject_handler(
 
         reject_story(story_id)
 
+        # =================================================
+        # УВЕДОМЛЕНИЕ АВТОРУ
+        # =================================================
+
+        try:
+
+            await callback.bot.send_message(
+                chat_id=story["user_id"],
+                text=(
+                    "ℹ️ Спасибо, что поделились своей историей.\n\n"
+                    "К сожалению, сейчас она не может быть опубликована."
+                ),
+            )
+
+        except Exception as error:
+
+            print(
+                f"USER NOTIFICATION ERROR: {error}"
+            )
+
+        # Убираем кнопки модерации
         await callback.message.edit_reply_markup(
             reply_markup=None
         )
@@ -338,8 +381,6 @@ async def contact_user_handler(
         )
         return
 
-    # sqlite3.Row нужно читать через ["поле"],
-    # а не через .get()
     user_id = story["user_id"]
 
     if not user_id:
@@ -424,11 +465,11 @@ async def send_contact_message(
     try:
 
         await message.bot.send_message(
-    chat_id=user_id,
-    text=(
-        "💬 Сообщение от команды:\n\n"
-        f"{message.text}"
-    ),
+            chat_id=user_id,
+            text=(
+                "💬 Сообщение от команды:\n\n"
+                f"{message.text}"
+            ),
         )
 
         await state.clear()
