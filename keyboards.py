@@ -27,8 +27,8 @@ main_keyboard = ReplyKeyboardMarkup(
         ],
         [
             KeyboardButton(
-    text="🆘 Экстренная поддержка"
-),
+                text="🆘 Экстренная поддержка"
+            ),
         ],
     ],
     resize_keyboard=True,
@@ -56,6 +56,11 @@ admin_keyboard = ReplyKeyboardMarkup(
         ],
         [
             KeyboardButton(
+                text="💬 Диалоги"
+            ),
+        ],
+        [
+            KeyboardButton(
                 text="⬅️ Назад"
             ),
         ],
@@ -65,10 +70,13 @@ admin_keyboard = ReplyKeyboardMarkup(
 
 
 # =========================================================
-# КНОПКИ МОДЕРАЦИИ
+# МОДЕРАЦИЯ
 # =========================================================
 
-def moderation_keyboard(story_id: int, user_id: int):
+def moderation_keyboard(
+    story_id: int,
+    user_id: int,
+):
 
     return InlineKeyboardMarkup(
         inline_keyboard=[
@@ -90,9 +98,75 @@ def moderation_keyboard(story_id: int, user_id: int):
             ],
             [
                 InlineKeyboardButton(
-    text="👤 Написать пользователю",
-    callback_data=f"contact:{story_id}",
+                    text="👤 Написать пользователю",
+                    callback_data=f"contact:{story_id}",
                 ),
             ],
+        ]
+    )
+
+
+# =========================================================
+# КНОПКА НОВОГО ДИАЛОГА
+# =========================================================
+
+def support_new_message_keyboard(
+    dialog_id: int,
+):
+
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="💬 Открыть диалог",
+                    callback_data=f"dialog_open:{dialog_id}",
+                )
+            ]
+        ]
+    )
+
+
+# =========================================================
+# КНОПКИ ВНУТРИ ДИАЛОГА
+# =========================================================
+
+def support_dialog_keyboard(
+    dialog_id: int,
+):
+
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="⬅️ К диалогам",
+                    callback_data=f"dialog_exit:{dialog_id}",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="🔴 Закрыть диалог",
+                    callback_data=f"dialog_close:{dialog_id}",
+                )
+            ],
+        ]
+    )
+
+
+# =========================================================
+# СПИСОК ДИАЛОГОВ
+# =========================================================
+
+def dialog_list_keyboard(
+    dialog_id: int,
+):
+
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="💬 Открыть",
+                    callback_data=f"dialog_open:{dialog_id}",
+                )
+            ]
         ]
     )
