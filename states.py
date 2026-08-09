@@ -8,7 +8,6 @@ class StoryState(StatesGroup):
     waiting_for_support_message = State()
 
     waiting_for_edit = State()
-
     waiting_for_contact_message = State()
 
     moderator_dialog = State()
