@@ -16,9 +16,8 @@ def get_connection():
 
 def init_db():
     connection = get_connection()
-    cursor = connection.cursor()
 
-    cursor.execute(
+    connection.execute(
         """
         CREATE TABLE IF NOT EXISTS stories (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -32,7 +31,7 @@ def init_db():
         """
     )
 
-    cursor.execute(
+    connection.execute(
         """
         CREATE TABLE IF NOT EXISTS support_dialogs (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -49,7 +48,7 @@ def init_db():
         """
     )
 
-    cursor.execute(
+    connection.execute(
         """
         CREATE TABLE IF NOT EXISTS support_messages (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -67,30 +66,15 @@ def init_db():
     connection.close()
 
 
-# =========================================================
-# STORIES
-# =========================================================
-
-def create_story(
-    user_id: int,
-    text: str,
-):
+def create_story(user_id: int, text: str):
     connection = get_connection()
-    cursor = connection.cursor()
 
-    cursor.execute(
+    cursor = connection.execute(
         """
-        INSERT INTO stories (
-            user_id,
-            text,
-            status
-        )
+        INSERT INTO stories (user_id, text, status)
         VALUES (?, ?, 'waiting')
         """,
-        (
-            user_id,
-            text,
-        ),
+        (user_id, text),
     )
 
     story_id = cursor.lastrowid
@@ -101,10 +85,7 @@ def create_story(
     return story_id
 
 
-def update_ai_result(
-    story_id: int,
-    ai_result: str,
-):
+def update_ai_result(story_id: int, ai_result: str):
     connection = get_connection()
 
     connection.execute(
@@ -113,20 +94,14 @@ def update_ai_result(
         SET ai_result = ?
         WHERE id = ?
         """,
-        (
-            ai_result,
-            story_id,
-        ),
+        (ai_result, story_id),
     )
 
     connection.commit()
     connection.close()
 
 
-def update_post(
-    story_id: int,
-    post_text: str,
-):
+def update_post(story_id: int, post_text: str):
     connection = get_connection()
 
     connection.execute(
@@ -135,19 +110,14 @@ def update_post(
         SET post_text = ?
         WHERE id = ?
         """,
-        (
-            post_text,
-            story_id,
-        ),
+        (post_text, story_id),
     )
 
     connection.commit()
     connection.close()
 
 
-def get_story(
-    story_id: int,
-):
+def get_story(story_id: int):
     connection = get_connection()
 
     row = connection.execute(
@@ -164,9 +134,7 @@ def get_story(
     return row
 
 
-def publish_story(
-    story_id: int,
-):
+def publish_story(story_id: int):
     connection = get_connection()
 
     connection.execute(
@@ -182,9 +150,7 @@ def publish_story(
     connection.close()
 
 
-def reject_story(
-    story_id: int,
-):
+def reject_story(story_id: int):
     connection = get_connection()
 
     connection.execute(
@@ -237,10 +203,7 @@ def get_stats():
     connection = get_connection()
 
     total = connection.execute(
-        """
-        SELECT COUNT(*)
-        FROM stories
-        """
+        "SELECT COUNT(*) FROM stories"
     ).fetchone()[0]
 
     waiting = connection.execute(
@@ -277,18 +240,10 @@ def get_stats():
     }
 
 
-# =========================================================
-# SUPPORT DIALOGS
-# =========================================================
-
-def create_support_dialog(
-    user_id: int,
-    first_message: str,
-):
+def create_support_dialog(user_id: int, first_message: str):
     connection = get_connection()
-    cursor = connection.cursor()
 
-    cursor.execute(
+    cursor = connection.execute(
         """
         INSERT INTO support_dialogs (
             user_id,
@@ -299,15 +254,12 @@ def create_support_dialog(
         )
         VALUES (?, ?, 'open', 'new', 1)
         """,
-        (
-            user_id,
-            first_message,
-        ),
+        (user_id, first_message),
     )
 
     dialog_id = cursor.lastrowid
 
-    cursor.execute(
+    connection.execute(
         """
         INSERT INTO support_messages (
             dialog_id,
@@ -330,9 +282,7 @@ def create_support_dialog(
     return dialog_id
 
 
-def get_open_dialog_by_user(
-    user_id: int,
-):
+def get_open_dialog_by_user(user_id: int):
     connection = get_connection()
 
     row = connection.execute(
@@ -352,9 +302,7 @@ def get_open_dialog_by_user(
     return row
 
 
-def get_dialog(
-    dialog_id: int,
-):
+def get_dialog(dialog_id: int):
     connection = get_connection()
 
     row = connection.execute(
@@ -371,9 +319,7 @@ def get_dialog(
     return row
 
 
-def get_dialog_messages(
-    dialog_id: int,
-):
+def get_dialog_messages(dialog_id: int):
     connection = get_connection()
 
     rows = connection.execute(
@@ -466,10 +412,7 @@ def get_open_dialogs():
     return rows
 
 
-def assign_dialog(
-    dialog_id: int,
-    admin_id: int,
-):
+def assign_dialog(dialog_id: int, admin_id: int):
     connection = get_connection()
 
     connection.execute(
@@ -480,19 +423,14 @@ def assign_dialog(
             updated_at = CURRENT_TIMESTAMP
         WHERE id = ?
         """,
-        (
-            admin_id,
-            dialog_id,
-        ),
+        (admin_id, dialog_id),
     )
 
     connection.commit()
     connection.close()
 
 
-def unassign_dialog(
-    dialog_id: int,
-):
+def unassign_dialog(dialog_id: int):
     connection = get_connection()
 
     connection.execute(
@@ -509,9 +447,7 @@ def unassign_dialog(
     connection.close()
 
 
-def close_dialog(
-    dialog_id: int,
-):
+def close_dialog(dialog_id: int):
     connection = get_connection()
 
     connection.execute(
@@ -530,9 +466,7 @@ def close_dialog(
     connection.close()
 
 
-def mark_dialog_read_by_admin(
-    dialog_id: int,
-):
+def mark_dialog_read_by_admin(dialog_id: int):
     connection = get_connection()
 
     connection.execute(
@@ -548,10 +482,7 @@ def mark_dialog_read_by_admin(
     connection.close()
 
 
-def set_dialog_status(
-    dialog_id: int,
-    status: str,
-):
+def set_dialog_status(dialog_id: int, status: str):
     connection = get_connection()
 
     connection.execute(
@@ -561,19 +492,14 @@ def set_dialog_status(
             updated_at = CURRENT_TIMESTAMP
         WHERE id = ?
         """,
-        (
-            status,
-            dialog_id,
-        ),
+        (status, dialog_id),
     )
 
     connection.commit()
     connection.close()
 
 
-def request_personal_contact(
-    dialog_id: int,
-):
+def request_personal_contact(dialog_id: int):
     connection = get_connection()
 
     row = connection.execute(
