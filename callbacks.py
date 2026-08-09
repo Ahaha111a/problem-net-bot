@@ -16,6 +16,7 @@ from database import (
     add_support_message,
     assign_dialog,
     close_dialog,
+    mark_dialog_read_by_admin,
 )
 
 from states import StoryState
@@ -502,7 +503,134 @@ async def send_contact_message(
         await state.clear()
 
         await message.answer(
-            "❌ Не удалось отправить сообщение."
+            "❌ Не удалось отправить сообщение.\n\n"
+            "Возможно, пользователь заблокировал бота "
+            "или ещё не начал с ним диалог."
+        )
+
+
+# =========================================================
+# ОТВЕТ НА ЗАПРОС ЭКСТРЕННОЙ ПОДДЕРЖКИ
+# =========================================================
+
+@callback_router.callback_query(
+    F.data.startswith("support_reply:")
+)
+async def support_reply_handler(
+    callback: CallbackQuery,
+    state: FSMContext,
+):
+
+    if not await check_admin(callback):
+        return
+
+    try:
+
+        user_id = int(
+            callback.data.split(":")[1]
+        )
+
+    except (ValueError, IndexError):
+
+        await callback.answer(
+            "❌ Некорректный ID пользователя.",
+            show_alert=True,
+        )
+
+        return
+
+    await state.update_data(
+        support_user_id=user_id
+    )
+
+    await state.set_state(
+        StoryState.waiting_for_support_reply
+    )
+
+    await callback.answer()
+
+    await callback.message.answer(
+        f"💬 <b>Ответ пользователю</b>\n\n"
+        f"👤 User ID: <code>{user_id}</code>\n\n"
+        "Напишите сообщение, которое хотите "
+        "отправить пользователю.",
+        parse_mode="HTML",
+    )
+
+
+# =========================================================
+# ОТПРАВИТЬ ОТВЕТ ПОЛЬЗОВАТЕЛЮ
+# =========================================================
+
+@callback_router.message(
+    StoryState.waiting_for_support_reply
+)
+async def send_support_reply(
+    message: Message,
+    state: FSMContext,
+):
+
+    if not is_admin(message.from_user.id):
+
+        await state.clear()
+
+        await message.answer(
+            "⛔ У вас нет доступа."
+        )
+
+        return
+
+    if not message.text:
+
+        await message.answer(
+            "❗ Отправьте текстовое сообщение."
+        )
+
+        return
+
+    data = await state.get_data()
+
+    user_id = data.get(
+        "support_user_id"
+    )
+
+    if not user_id:
+
+        await state.clear()
+
+        await message.answer(
+            "❌ Пользователь не определён."
+        )
+
+        return
+
+    try:
+
+        await message.bot.send_message(
+            chat_id=user_id,
+            text=(
+                "💙 Сообщение от модератора:\n\n"
+                f"{message.text}"
+            ),
+        )
+
+        await state.clear()
+
+        await message.answer(
+            "✅ Ответ отправлен пользователю."
+        )
+
+    except Exception as error:
+
+        print(
+            f"SUPPORT REPLY ERROR: {error}"
+        )
+
+        await state.clear()
+
+        await message.answer(
+            "❌ Не удалось отправить ответ.\n\n"
+            "Возможно, пользователь заблокировал бота."
         )
 
 
@@ -556,12 +684,16 @@ async def dialog_open_handler(
 
         return
 
+    # Открытие диалога автоматически отмечает
+    # сообщения пользователя как прочитанные.
+    mark_dialog_read_by_admin(
+        dialog_id
+    )
+
     assign_dialog(
         dialog_id,
         callback.from_user.id,
     )
-
-    await state.clear()
 
     await state.update_data(
         moderator_dialog_id=dialog_id
@@ -582,21 +714,24 @@ async def dialog_open_handler(
         "━━━━━━━━━━━━━━\n\n"
     )
 
-    for msg in messages:
+    for item in messages:
 
-        if msg["sender_type"] == "user":
-            prefix = "👤 <b>Пользователь:</b>"
+        if item["sender_type"] == "user":
+
+            prefix = "👤 Пользователь"
+
         else:
-            prefix = "👨‍💼 <b>Модератор:</b>"
+
+            prefix = "👨‍💼 Модератор"
 
         text += (
-            f"{prefix}\n"
-            f"{msg['text']}\n\n"
+            f"<b>{prefix}</b>\n"
+            f"{item['text']}\n\n"
         )
 
-    text += "━━━━━━━━━━━━━━"
-
     from keyboards import support_dialog_keyboard
+
+    await callback.answer()
 
     await callback.message.answer(
         text,
@@ -605,8 +740,6 @@ async def dialog_open_handler(
             dialog_id
         ),
     )
-
-    await callback.answer()
 
 
 # =========================================================
@@ -631,8 +764,11 @@ async def dialog_exit_handler(
     )
 
     await callback.message.answer(
-        "💬 Диалог не закрыт.\n\n"
-        "Вы можете открыть его снова через "
+        "💬 Вы вышли из текущего диалога.\n\n"
+        "Сам диалог остаётся открытым.\n"
+        "Новые сообщения пользователя продолжат "
+        "поступать в систему.\n\n"
+        "Открыть его снова можно через "
         "раздел «💬 Диалоги»."
     )
 
@@ -678,7 +814,9 @@ async def dialog_close_handler(
 
         return
 
-    close_dialog(dialog_id)
+    close_dialog(
+        dialog_id
+    )
 
     if dialog["user_id"]:
 
@@ -687,10 +825,11 @@ async def dialog_close_handler(
             await callback.bot.send_message(
                 chat_id=dialog["user_id"],
                 text=(
-                    "💙 Диалог с модератором завершён.\n\n"
-                    "Если вам снова понадобится поддержка, "
-                    "вы можете обратиться к нам через "
-                    "кнопку «🆘 Экстренная поддержка»."
+                    "💙 Диалог с поддержкой завершён.\n\n"
+                    "Спасибо, что обратились к нам.\n\n"
+                    "Если вам снова понадобится помощь, "
+                    "вы можете начать новый диалог через "
+                    "«🆘 Экстренная поддержка»."
                 ),
             )
 
@@ -702,17 +841,17 @@ async def dialog_close_handler(
 
     await state.clear()
 
-    await callback.answer(
-        "🔴 Диалог закрыт."
+    await callback.message.edit_reply_markup(
+        reply_markup=None
     )
 
-    await callback.message.answer(
+    await callback.answer(
         f"🔴 Диалог #{dialog_id} закрыт."
     )
 
 
 # =========================================================
-# СООБЩЕНИЕ МОДЕРАТОРА В АКТИВНЫЙ ДИАЛОГ
+# СООБЩЕНИЕ МОДЕРАТОРА В ДИАЛОГЕ
 # =========================================================
 
 @callback_router.message(
@@ -757,14 +896,16 @@ async def moderator_dialog_message(
 
         return
 
-    dialog = get_dialog(dialog_id)
+    dialog = get_dialog(
+        dialog_id
+    )
 
     if dialog is None or dialog["status"] != "open":
 
         await state.clear()
 
         await message.answer(
-            "❌ Диалог уже закрыт или не найден."
+            "❌ Диалог уже закрыт."
         )
 
         return
