@@ -7,7 +7,7 @@ from aiogram.types import (
 
 
 # =========================================================
-# ГЛАВНОЕ МЕНЮ
+# ГЛАВНОЕ МЕНЮ ПОЛЬЗОВАТЕЛЯ
 # =========================================================
 
 main_keyboard = ReplyKeyboardMarkup(
@@ -51,12 +51,12 @@ admin_keyboard = ReplyKeyboardMarkup(
         ],
         [
             KeyboardButton(
-                text="📁 Все истории"
+                text="💬 Диалоги"
             ),
         ],
         [
             KeyboardButton(
-                text="💬 Диалоги"
+                text="📁 Все истории"
             ),
         ],
         [
@@ -67,6 +67,48 @@ admin_keyboard = ReplyKeyboardMarkup(
     ],
     resize_keyboard=True,
 )
+
+
+# =========================================================
+# ВЫБОР СПОСОБА ЭКСТРЕННОЙ ПОДДЕРЖКИ
+# =========================================================
+
+def support_method_keyboard():
+
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="💬 Продолжить в боте",
+                    callback_data="support_method:bot",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="📞 Пусть со мной свяжется сотрудник",
+                    callback_data="support_method:personal",
+                )
+            ],
+        ]
+    )
+
+
+# =========================================================
+# КНОПКА ЗАПРОСА ЛИЧНОГО КОНТАКТА
+# =========================================================
+
+def personal_contact_keyboard():
+
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="📞 Связаться со мной лично",
+                    callback_data="support_personal_request",
+                )
+            ]
+        ]
+    )
 
 
 # =========================================================
@@ -121,16 +163,22 @@ def support_new_message_keyboard(
                     text="💬 Открыть диалог",
                     callback_data=f"dialog_open:{dialog_id}",
                 )
-            ]
+            ],
+            [
+                InlineKeyboardButton(
+                    text="📞 Связаться лично",
+                    callback_data=f"dialog_personal:{dialog_id}",
+                )
+            ],
         ]
     )
 
 
 # =========================================================
-# ОТКРЫТЫЙ ДИАЛОГ
+# ОТКРЫТЫЙ ДИАЛОГ МОДЕРАТОРА
 # =========================================================
 
-def support_dialog_keyboard(
+def dialog_control_keyboard(
     dialog_id: int,
 ):
 
@@ -138,25 +186,25 @@ def support_dialog_keyboard(
         inline_keyboard=[
             [
                 InlineKeyboardButton(
-                    text="↩️ Выйти из диалога",
+                    text="📞 Связаться лично",
+                    callback_data=f"dialog_personal:{dialog_id}",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="⬅️ Выйти из диалога",
                     callback_data=f"dialog_exit:{dialog_id}",
                 )
             ],
-            [
-                InlineKeyboardButton(
-                    text="🔴 Завершить диалог",
-                    callback_data=f"dialog_close:{dialog_id}",
-                )
-            ],
         ]
     )
 
 
 # =========================================================
-# КНОПКА ДИАЛОГА В СПИСКЕ
+# ЗАПРОС ЛИЧНОГО КОНТАКТА
 # =========================================================
 
-def dialog_list_keyboard(
+def personal_request_keyboard(
     dialog_id: int,
 ):
 
@@ -164,9 +212,15 @@ def dialog_list_keyboard(
         inline_keyboard=[
             [
                 InlineKeyboardButton(
-                    text="💬 Открыть",
+                    text="👤 Связаться с пользователем",
+                    callback_data=f"dialog_personal:{dialog_id}",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="💬 Открыть диалог",
                     callback_data=f"dialog_open:{dialog_id}",
                 )
-            ]
+            ],
         ]
     )
