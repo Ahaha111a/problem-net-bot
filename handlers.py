@@ -1,3 +1,5 @@
+from html import escape
+
 from aiogram import Router, F
 from aiogram.types import (
     Message,
@@ -22,7 +24,6 @@ from database import (
     create_support_dialog,
     add_support_message,
     get_open_dialogs,
-    get_dialog_messages,
 )
 
 from ai import analyze_story
@@ -33,6 +34,7 @@ from keyboards import (
     admin_keyboard,
     moderation_keyboard,
     support_new_message_keyboard,
+    personal_contact_keyboard,
 )
 
 
@@ -43,7 +45,10 @@ router = Router()
 # ПРОВЕРКА АДМИНИСТРАТОРА
 # =========================================================
 
-def is_admin(user_id: int) -> bool:
+def is_admin(
+    user_id: int,
+) -> bool:
+
     return user_id in ADMIN_IDS
 
 
@@ -52,7 +57,9 @@ def is_admin(user_id: int) -> bool:
 # =========================================================
 
 @router.message(Command("start"))
-async def start_command(message: Message):
+async def start_command(
+    message: Message,
+):
 
     await message.answer(
         "👋 Добро пожаловать в «Проблем нет»\n\n"
@@ -67,7 +74,9 @@ async def start_command(message: Message):
         reply_markup=main_keyboard,
     )
 
-    if is_admin(message.from_user.id):
+    if is_admin(
+        message.from_user.id
+    ):
 
         await message.answer(
             "👨‍💼 Вы вошли как администратор.\n"
@@ -82,7 +91,9 @@ async def start_command(message: Message):
 # =========================================================
 
 @router.message(Command("help"))
-async def help_command(message: Message):
+async def help_command(
+    message: Message,
+):
 
     await message.answer(
         "💡 Как пользоваться ботом:\n\n"
@@ -100,7 +111,9 @@ async def help_command(message: Message):
 # ЭКСТРЕННАЯ ПОДДЕРЖКА
 # =========================================================
 
-@router.message(F.text == "🆘 Экстренная поддержка")
+@router.message(
+    F.text == "🆘 Экстренная поддержка"
+)
 async def emergency_support(
     message: Message,
     state: FSMContext,
@@ -108,49 +121,22 @@ async def emergency_support(
 
     await state.clear()
 
-    dialog = get_open_dialog_by_user(
-        message.from_user.id
-    )
-
-    if dialog:
-
-        messages = get_dialog_messages(
-            dialog["id"]
-        )
-
-        await state.update_data(
-            support_dialog_id=dialog["id"]
-        )
-
-        await state.set_state(
-            StoryState.waiting_for_support_message
-        )
-
-        await message.answer(
-            "🆘 <b>Ваш диалог с поддержкой</b>\n\n"
-            "Можете продолжить писать здесь.\n"
-            "Все сообщения будут переданы модератору.\n\n"
-            "Если хотите отправить новое сообщение, "
-            "напишите его ниже.",
-            parse_mode="HTML",
-        )
-
-        return
-
     await state.set_state(
-        StoryState.waiting_for_support_message
+        StoryState.waiting_for_support_method
     )
+
+    from keyboards import support_method_keyboard
 
     await message.answer(
-        "🆘 <b>Поддержка</b>\n\n"
-        "Если вам сейчас очень тяжело или вам "
-        "нужна помощь, расскажите нам, что происходит.\n\n"
-        "Ваше сообщение будет передано модератору. "
-        "Вы сможете продолжить диалог через бота.\n\n"
-        "⚠️ Если вы находитесь в непосредственной опасности, "
-        "обратитесь в местные экстренные службы.\n\n"
-        "Напишите сообщение ниже.",
+        "🆘 <b>Экстренная поддержка</b>\n\n"
+        "Выберите, как вы хотите продолжить общение:\n\n"
+        "💬 <b>В боте</b> — вы будете "
+        "переписываться с модератором здесь.\n\n"
+        "📞 <b>Лично</b> — мы передадим сотруднику "
+        "запрос, чтобы он смог связаться с вами напрямую.\n\n"
+        "Диалог в боте при этом не закрывается.",
         parse_mode="HTML",
+        reply_markup=support_method_keyboard(),
     )
 
 
@@ -166,17 +152,16 @@ async def receive_support_message(
     state: FSMContext,
 ):
 
-    support_text = message.text
-
-    if not support_text:
+    if not message.text:
 
         await message.answer(
-            "❗ Пожалуйста, отправьте сообщение обычным текстом."
+            "❗ Пожалуйста, отправьте сообщение "
+            "обычным текстом."
         )
 
         return
 
-    support_text = support_text.strip()
+    support_text = message.text.strip()
 
     if len(support_text) < 2:
 
@@ -189,13 +174,13 @@ async def receive_support_message(
 
     user_id = message.from_user.id
 
-    existing_dialog = get_open_dialog_by_user(
+    dialog = get_open_dialog_by_user(
         user_id
     )
 
-    if existing_dialog:
+    if dialog:
 
-        dialog_id = existing_dialog["id"]
+        dialog_id = dialog["id"]
 
         add_support_message(
             dialog_id=dialog_id,
@@ -211,83 +196,46 @@ async def receive_support_message(
             first_message=support_text,
         )
 
-    support_text_for_admin = (
-        "🆘 <b>НОВОЕ СООБЩЕНИЕ</b>\n\n"
-        f"💬 <b>Диалог #{dialog_id}</b>\n"
-        f"👤 <b>User ID:</b> "
-        f"<code>{user_id}</code>\n\n"
-        "Сообщение пользователя:\n\n"
-        f"{support_text}"
+    await notify_admins_about_message(
+        message,
+        dialog_id,
+        support_text,
     )
-
-    sent_to_admin = False
-
-    for admin_id in ADMIN_IDS:
-
-        try:
-
-            await message.bot.send_message(
-                admin_id,
-                support_text_for_admin,
-                reply_markup=support_new_message_keyboard(
-                    dialog_id
-                ),
-                parse_mode="HTML",
-            )
-
-            sent_to_admin = True
-
-        except Exception as error:
-
-            print(
-                f"SUPPORT ADMIN SEND ERROR: {error}"
-            )
-
-    if sent_to_admin:
-
-        await message.answer(
-            "💙 Ваше сообщение передано модератору.\n\n"
-            "Вы можете продолжать писать сюда. "
-            "Все ваши сообщения будут передаваться "
-            "в этот диалог."
-        )
-
-    else:
-
-        await message.answer(
-            "❌ Сейчас не удалось передать сообщение "
-            "модератору.\n\n"
-            "Попробуйте немного позже."
-        )
 
     await state.clear()
 
+    await message.answer(
+        "💙 Сообщение передано модератору.\n\n"
+        "Вы можете продолжать писать сюда.\n"
+        "Диалог останется открытым.",
+        reply_markup=personal_contact_keyboard(),
+    )
+
 
 # =========================================================
-# СООБЩЕНИЯ ПОЛЬЗОВАТЕЛЯ В АКТИВНЫЙ ДИАЛОГ
-# =========================================================
-#
-# ВАЖНО:
-# Этот обработчик работает ТОЛЬКО для НЕ-администраторов.
-# Поэтому он больше не перехватывает кнопки админ-панели.
+# СООБЩЕНИЯ В АКТИВНЫЙ ДИАЛОГ
 # =========================================================
 
 @router.message(
     F.chat.type == "private",
     F.text,
-    ~F.from_user.id.in_(ADMIN_IDS),
 )
 async def active_support_message(
     message: Message,
     state: FSMContext,
 ):
 
-    # Не перехватываем кнопки главного меню
+    if is_admin(
+        message.from_user.id
+    ):
+        return
+
     if message.text in [
         "📝 Поделиться историей",
         "💡 Совет дня",
         "📚 Полезные материалы",
         "🆘 Экстренная поддержка",
+        "⬅️ Назад",
     ]:
         return
 
@@ -298,21 +246,48 @@ async def active_support_message(
     if not dialog:
         return
 
+    text = message.text.strip()
+
+    if not text:
+        return
+
     dialog_id = dialog["id"]
 
     add_support_message(
         dialog_id=dialog_id,
         sender_id=message.from_user.id,
         sender_type="user",
-        text=message.text,
+        text=text,
     )
+
+    await notify_admins_about_message(
+        message,
+        dialog_id,
+        text,
+    )
+
+    await message.answer(
+        "💙 Сообщение передано модератору.",
+        reply_markup=personal_contact_keyboard(),
+    )
+
+
+# =========================================================
+# УВЕДОМИТЬ МОДЕРАТОРОВ
+# =========================================================
+
+async def notify_admins_about_message(
+    message: Message,
+    dialog_id: int,
+    text: str,
+):
 
     admin_text = (
         "💬 <b>Новое сообщение в диалоге</b>\n\n"
         f"Диалог #{dialog_id}\n"
         f"👤 User ID: "
         f"<code>{message.from_user.id}</code>\n\n"
-        f"{message.text}"
+        f"{escape(text)}"
     )
 
     for admin_id in ADMIN_IDS:
@@ -334,16 +309,14 @@ async def active_support_message(
                 f"DIALOG MESSAGE ADMIN ERROR: {error}"
             )
 
-    await message.answer(
-        "💙 Сообщение передано модератору."
-    )
-
 
 # =========================================================
 # ПОДЕЛИТЬСЯ ИСТОРИЕЙ
 # =========================================================
 
-@router.message(F.text == "📝 Поделиться историей")
+@router.message(
+    F.text == "📝 Поделиться историей"
+)
 async def start_story(
     message: Message,
     state: FSMContext,
@@ -364,23 +337,24 @@ async def start_story(
 # ПОЛУЧЕНИЕ ИСТОРИИ
 # =========================================================
 
-@router.message(StoryState.waiting_for_story)
+@router.message(
+    StoryState.waiting_for_story
+)
 async def receive_story(
     message: Message,
     state: FSMContext,
 ):
 
-    story = message.text
-
-    if not story:
+    if not message.text:
 
         await message.answer(
-            "❗ Отправьте историю обычным текстовым сообщением."
+            "❗ Отправьте историю обычным "
+            "текстовым сообщением."
         )
 
         return
 
-    story = story.strip()
+    story = message.text.strip()
 
     if len(story) < 10:
 
@@ -448,13 +422,13 @@ async def receive_story(
         f"<code>{message.from_user.id}</code>\n\n"
         "🔒 История отправлена анонимно.\n\n"
         "💭 <b>Текст:</b>\n\n"
-        f"{story}\n\n"
+        f"{escape(story)}\n\n"
         "━━━━━━━━━━━━━━\n\n"
         "🤖 <b>Анализ ИИ:</b>\n\n"
-        f"{ai_result}\n\n"
+        f"{escape(ai_result)}\n\n"
         "━━━━━━━━━━━━━━\n\n"
         "📌 <b>Готовый пост:</b>\n\n"
-        f"{post_text}"
+        f"{escape(post_text)}"
     )
 
     for admin_id in ADMIN_IDS:
@@ -489,22 +463,30 @@ async def receive_story(
 # АДМИН-ПАНЕЛЬ
 # =========================================================
 
-@router.message(F.text == "👨‍💼 Админ-панель")
+@router.message(
+    F.text == "👨‍💼 Админ-панель"
+)
 async def admin_panel(
     message: Message,
 ):
 
-    if not is_admin(message.from_user.id):
+    if not is_admin(
+        message.from_user.id
+    ):
         return
 
     stats = get_stats()
 
     await message.answer(
         "👨‍💼 <b>Панель администратора</b>\n\n"
-        f"⏳ На модерации: {stats['waiting']}\n"
-        f"📚 Всего историй: {stats['total']}\n"
-        f"✅ Опубликовано: {stats['published']}\n"
-        f"❌ Отклонено: {stats['rejected']}\n\n"
+        f"⏳ На модерации: "
+        f"{stats['waiting']}\n"
+        f"📚 Всего историй: "
+        f"{stats['total']}\n"
+        f"✅ Опубликовано: "
+        f"{stats['published']}\n"
+        f"❌ Отклонено: "
+        f"{stats['rejected']}\n\n"
         "Выберите действие:",
         parse_mode="HTML",
         reply_markup=admin_keyboard,
@@ -515,12 +497,16 @@ async def admin_panel(
 # ДИАЛОГИ
 # =========================================================
 
-@router.message(F.text == "💬 Диалоги")
+@router.message(
+    F.text == "💬 Диалоги"
+)
 async def dialogs_menu(
     message: Message,
 ):
 
-    if not is_admin(message.from_user.id):
+    if not is_admin(
+        message.from_user.id
+    ):
         return
 
     dialogs = get_open_dialogs()
@@ -535,24 +521,31 @@ async def dialogs_menu(
         return
 
     await message.answer(
-        f"💬 <b>Открытые диалоги: {len(dialogs)}</b>",
+        f"💬 <b>Открытые диалоги: "
+        f"{len(dialogs)}</b>",
         parse_mode="HTML",
     )
 
     for dialog in dialogs[:50]:
 
-        last_message = dialog["last_message"] or ""
+        last_message = (
+            dialog["last_message"] or ""
+        )
 
         if len(last_message) > 100:
-            last_message = last_message[:100] + "..."
 
-        unread_admin = dialog["unread_admin"] or 0
+            last_message = (
+                last_message[:100] + "..."
+            )
 
-        if unread_admin > 0:
+        unread = (
+            dialog["unread_admin"] or 0
+        )
+
+        if unread:
 
             unread_text = (
-                f"🔴 <b>{unread_admin} новых "
-                f"сообщений</b>"
+                f"🔴 Новых сообщений: {unread}"
             )
 
         else:
@@ -567,7 +560,7 @@ async def dialogs_menu(
             f"<code>{dialog['user_id']}</code>\n\n"
             f"{unread_text}\n\n"
             f"Последнее сообщение:\n"
-            f"{last_message}"
+            f"{escape(last_message)}"
         )
 
         keyboard = InlineKeyboardMarkup(
@@ -576,7 +569,8 @@ async def dialogs_menu(
                     InlineKeyboardButton(
                         text="💬 Открыть",
                         callback_data=(
-                            f"dialog_open:{dialog['id']}"
+                            f"dialog_open:"
+                            f"{dialog['id']}"
                         ),
                     )
                 ]
@@ -594,12 +588,16 @@ async def dialogs_menu(
 # МОДЕРАЦИЯ
 # =========================================================
 
-@router.message(F.text == "⏳ Модерация")
+@router.message(
+    F.text == "⏳ Модерация"
+)
 async def moderation(
     message: Message,
 ):
 
-    if not is_admin(message.from_user.id):
+    if not is_admin(
+        message.from_user.id
+    ):
         return
 
     stories = get_waiting_stories()
@@ -614,7 +612,8 @@ async def moderation(
         return
 
     await message.answer(
-        f"⏳ <b>На модерации: {len(stories)}</b>",
+        f"⏳ <b>На модерации: "
+        f"{len(stories)}</b>",
         parse_mode="HTML",
     )
 
@@ -624,7 +623,7 @@ async def moderation(
             f"📥 <b>История #{story['id']}</b>\n\n"
             f"👤 User ID: "
             f"<code>{story['user_id']}</code>\n\n"
-            f"{story['text']}",
+            f"{escape(story['text'])}",
             parse_mode="HTML",
             reply_markup=moderation_keyboard(
                 story["id"],
@@ -637,22 +636,30 @@ async def moderation(
 # СТАТИСТИКА
 # =========================================================
 
-@router.message(F.text == "📊 Статистика")
+@router.message(
+    F.text == "📊 Статистика"
+)
 async def statistics(
     message: Message,
 ):
 
-    if not is_admin(message.from_user.id):
+    if not is_admin(
+        message.from_user.id
+    ):
         return
 
     stats = get_stats()
 
     await message.answer(
         "📊 <b>Статистика</b>\n\n"
-        f"📚 Всего историй: {stats['total']}\n\n"
-        f"⏳ На модерации: {stats['waiting']}\n"
-        f"✅ Опубликовано: {stats['published']}\n"
-        f"❌ Отклонено: {stats['rejected']}",
+        f"📚 Всего историй: "
+        f"{stats['total']}\n\n"
+        f"⏳ На модерации: "
+        f"{stats['waiting']}\n"
+        f"✅ Опубликовано: "
+        f"{stats['published']}\n"
+        f"❌ Отклонено: "
+        f"{stats['rejected']}",
         parse_mode="HTML",
         reply_markup=admin_keyboard,
     )
@@ -662,12 +669,16 @@ async def statistics(
 # ВСЕ ИСТОРИИ
 # =========================================================
 
-@router.message(F.text == "📁 Все истории")
+@router.message(
+    F.text == "📁 Все истории"
+)
 async def all_stories(
     message: Message,
 ):
 
-    if not is_admin(message.from_user.id):
+    if not is_admin(
+        message.from_user.id
+    ):
         return
 
     stories = get_all_stories()
@@ -681,26 +692,28 @@ async def all_stories(
 
         return
 
-    text = "📁 <b>Все истории</b>\n\n"
+    text = (
+        "📁 <b>Все истории</b>\n\n"
+    )
 
     for story in stories[:30]:
 
         status = story["status"]
 
         if status == "waiting":
-            status_icon = "⏳"
+            icon = "⏳"
 
         elif status == "published":
-            status_icon = "✅"
+            icon = "✅"
 
         elif status == "rejected":
-            status_icon = "❌"
+            icon = "❌"
 
         else:
-            status_icon = "📌"
+            icon = "📌"
 
         text += (
-            f"{status_icon} #{story['id']} — "
+            f"{icon} #{story['id']} — "
             f"{status}\n"
         )
 
@@ -715,7 +728,9 @@ async def all_stories(
 # НАЗАД
 # =========================================================
 
-@router.message(F.text == "⬅️ Назад")
+@router.message(
+    F.text == "⬅️ Назад"
+)
 async def back(
     message: Message,
     state: FSMContext,
@@ -723,16 +738,18 @@ async def back(
 
     await state.clear()
 
-    if is_admin(message.from_user.id):
+    if is_admin(
+        message.from_user.id
+    ):
 
         await message.answer(
             "↩️ Админ-панель",
             reply_markup=admin_keyboard,
         )
 
-        return
+    else:
 
-    await message.answer(
-        "↩️ Главное меню",
-        reply_markup=main_keyboard,
-    )
+        await message.answer(
+            "↩️ Главное меню",
+            reply_markup=main_keyboard,
+        )
