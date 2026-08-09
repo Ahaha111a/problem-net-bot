@@ -266,19 +266,23 @@ async def receive_support_message(
 # =========================================================
 # СООБЩЕНИЯ ПОЛЬЗОВАТЕЛЯ В АКТИВНЫЙ ДИАЛОГ
 # =========================================================
+#
+# ВАЖНО:
+# Этот обработчик работает ТОЛЬКО для НЕ-администраторов.
+# Поэтому он больше не перехватывает кнопки админ-панели.
+# =========================================================
 
 @router.message(
     F.chat.type == "private",
     F.text,
+    ~F.from_user.id.in_(ADMIN_IDS),
 )
 async def active_support_message(
     message: Message,
     state: FSMContext,
 ):
 
-    if is_admin(message.from_user.id):
-        return
-
+    # Не перехватываем кнопки главного меню
     if message.text in [
         "📝 Поделиться историей",
         "💡 Совет дня",
@@ -717,11 +721,8 @@ async def back(
     state: FSMContext,
 ):
 
-    # Сбрасываем любое активное состояние
     await state.clear()
 
-    # Если это администратор —
-    # возвращаем админское меню
     if is_admin(message.from_user.id):
 
         await message.answer(
@@ -731,8 +732,6 @@ async def back(
 
         return
 
-    # Если обычный пользователь —
-    # возвращаем обычное меню
     await message.answer(
         "↩️ Главное меню",
         reply_markup=main_keyboard,
