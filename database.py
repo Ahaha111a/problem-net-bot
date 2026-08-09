@@ -5,8 +5,10 @@ from config import DB_PATH
 
 
 def get_connection():
+
     connection = sqlite3.connect(DB_PATH)
     connection.row_factory = sqlite3.Row
+
     return connection
 
 
@@ -143,9 +145,8 @@ def get_story(
 ):
 
     connection = get_connection()
-    cursor = connection.cursor()
 
-    cursor.execute(
+    story = connection.execute(
         """
         SELECT *
         FROM stories
@@ -154,9 +155,7 @@ def get_story(
         (
             story_id,
         ),
-    )
-
-    story = cursor.fetchone()
+    ).fetchone()
 
     connection.close()
 
