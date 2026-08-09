@@ -92,8 +92,9 @@ async def support_method_bot(
         "💬 <b>Продолжаем здесь</b>\n\n"
         "Напишите, что сейчас происходит.\n\n"
         "Сообщение увидит модератор.\n\n"
-        "В любой момент вы сможете попросить "
-        "сотрудника связаться с вами лично.",
+        "📞 В любой момент вы сможете "
+        "попросить сотрудника связаться "
+        "с вами лично.",
         parse_mode="HTML",
     )
 
@@ -125,12 +126,13 @@ async def support_method_personal(
         dialog_id = create_support_dialog(
             user_id=user_id,
             first_message=(
-                "Пользователь запросил "
-                "личный контакт с сотрудником поддержки."
+                "📞 Пользователь запросил "
+                "личный контакт с сотрудником "
+                "поддержки."
             ),
         )
 
-    await request_personal_contact(
+    await send_personal_request_to_admins(
         callback,
         dialog_id,
         user_id,
@@ -150,27 +152,39 @@ async def support_personal_request(
     callback: CallbackQuery,
 ):
 
+    user_id = callback.from_user.id
+
     dialog = get_open_dialog_by_user(
-        callback.from_user.id
+        user_id
     )
 
-    if not dialog:
+    if dialog:
 
-        await callback.answer(
-            "Сначала начните диалог с поддержкой.",
-            show_alert=True,
+        dialog_id = dialog["id"]
+
+    else:
+
+        dialog_id = create_support_dialog(
+            user_id=user_id,
+            first_message=(
+                "📞 Пользователь запросил "
+                "личный контакт с сотрудником "
+                "поддержки."
+            ),
         )
 
-        return
-
-    await request_personal_contact(
+    await send_personal_request_to_admins(
         callback,
-        dialog["id"],
-        callback.from_user.id,
+        dialog_id,
+        user_id,
     )
 
 
-async def request_personal_contact(
+# =========================================================
+# ОТПРАВКА ЗАПРОСА СОТРУДНИКАМ
+# =========================================================
+
+async def send_personal_request_to_admins(
     callback: CallbackQuery,
     dialog_id: int,
     user_id: int,
@@ -223,9 +237,10 @@ async def request_personal_contact(
     await callback.message.answer(
         "📞 <b>Запрос отправлен</b>\n\n"
         "Мы передали сотруднику поддержки "
-        "запрос на личный контакт.\n\n"
+        "ваш запрос.\n\n"
         "Сотрудник сможет открыть ваш "
-        "Telegram-профиль и написать вам напрямую.\n\n"
+        "Telegram-профиль и написать вам "
+        "напрямую.\n\n"
         "💬 Диалог в боте при этом "
         "остаётся открытым.",
         parse_mode="HTML",
@@ -712,134 +727,6 @@ async def send_contact_message(
 
 
 # =========================================================
-# СТАРЫЙ ОТВЕТ НА ПОДДЕРЖКУ
-# =========================================================
-
-@callback_router.callback_query(
-    F.data.startswith("support_reply:")
-)
-async def support_reply_handler(
-    callback: CallbackQuery,
-    state: FSMContext,
-):
-
-    if not await check_admin(
-        callback
-    ):
-        return
-
-    try:
-
-        user_id = int(
-            callback.data.split(":")[1]
-        )
-
-    except (
-        ValueError,
-        IndexError,
-    ):
-
-        await callback.answer(
-            "❌ Некорректный ID пользователя.",
-            show_alert=True,
-        )
-
-        return
-
-    await state.update_data(
-        support_user_id=user_id
-    )
-
-    await state.set_state(
-        StoryState.waiting_for_support_reply
-    )
-
-    await callback.answer()
-
-    await callback.message.answer(
-        f"💬 <b>Ответ пользователю</b>\n\n"
-        f"👤 User ID: "
-        f"<code>{user_id}</code>\n\n"
-        "Напишите сообщение.",
-        parse_mode="HTML",
-    )
-
-
-@callback_router.message(
-    StoryState.waiting_for_support_reply
-)
-async def send_support_reply(
-    message: Message,
-    state: FSMContext,
-):
-
-    if not is_admin(
-        message.from_user.id
-    ):
-
-        await state.clear()
-
-        await message.answer(
-            "⛔ У вас нет доступа."
-        )
-
-        return
-
-    if not message.text:
-
-        await message.answer(
-            "❗ Отправьте текстовое сообщение."
-        )
-
-        return
-
-    data = await state.get_data()
-
-    user_id = data.get(
-        "support_user_id"
-    )
-
-    if not user_id:
-
-        await state.clear()
-
-        await message.answer(
-            "❌ Пользователь не определён."
-        )
-
-        return
-
-    try:
-
-        await message.bot.send_message(
-            chat_id=user_id,
-            text=(
-                "💙 Сообщение от модератора:\n\n"
-                f"{message.text}"
-            ),
-        )
-
-        await state.clear()
-
-        await message.answer(
-            "✅ Ответ отправлен пользователю."
-        )
-
-    except Exception as error:
-
-        print(
-            f"SUPPORT REPLY ERROR: "
-            f"{error}"
-        )
-
-        await state.clear()
-
-        await message.answer(
-            "❌ Не удалось отправить ответ."
-        )
-
-
-# =========================================================
 # ОТКРЫТЬ ДИАЛОГ
 # =========================================================
 
@@ -1141,8 +1028,7 @@ async def dialog_close_handler(
     except Exception as error:
 
         print(
-            f"DIALOG CLOSE USER ERROR: "
-            f"{error}"
+            f"DIALOG CLOSE USER ERROR: {error}"
         )
 
     try:
