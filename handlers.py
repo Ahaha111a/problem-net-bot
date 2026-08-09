@@ -36,6 +36,7 @@ from keyboards import (
     moderation_keyboard,
     support_new_message_keyboard,
     personal_contact_keyboard,
+    material_actions_keyboard,
 )
 
 
@@ -52,65 +53,28 @@ MATERIALS = {
         "Сделайте несколько медленных вдохов и выдохов. "
         "Назовите про себя 5 вещей, которые видите, "
         "4 вещи, которых можете коснуться, "
-        "3 звука, которые слышите.\n\n"
-        "Иногда возвращение внимания в настоящий момент "
-        "помогает немного снизить напряжение."
+        "3 звука, которые слышите."
     ),
     "stress": (
         "🌿 <b>Как немного снизить стресс</b>\n\n"
-        "Когда напряжение накапливается, полезно не пытаться "
-        "решить всё сразу.\n\n"
-        "Попробуйте:\n"
-        "• сделать небольшой перерыв;\n"
-        "• выйти на свежий воздух;\n"
-        "• выпить воды;\n"
-        "• убрать одну небольшую задачу;\n"
-        "• дать себе несколько минут тишины."
+        "Попробуйте сделать небольшой перерыв, "
+        "выйти на свежий воздух, выпить воды "
+        "или убрать хотя бы одну небольшую задачу.\n\n"
+        "Иногда пауза помогает двигаться дальше."
     ),
     "sleep": (
         "🌙 <b>Если трудно уснуть</b>\n\n"
-        "Перед сном попробуйте уменьшить количество яркого света "
-        "и отложить телефон хотя бы на некоторое время.\n\n"
+        "Перед сном попробуйте уменьшить количество "
+        "яркого света и отложить телефон.\n\n"
         "Можно сделать несколько спокойных вдохов и выдохов."
     ),
     "self_esteem": (
         "💙 <b>Когда кажется, что вы недостаточно хороши</b>\n\n"
-        "Сравнение себя с другими часто показывает только часть картины.\n\n"
-        "Попробуйте вспомнить хотя бы три вещи, которые у вас сегодня получились.\n\n"
-        "Ваша ценность не определяется одной ошибкой или одним плохим периодом."
+        "Попробуйте вспомнить хотя бы три вещи, "
+        "которые у вас сегодня получились.\n\n"
+        "Ваша ценность не определяется одной ошибкой."
     ),
 }
-
-
-DAILY_TIPS = [
-    (
-        "💡 <b>Совет дня</b>\n\n"
-        "Не обязательно решать всю проблему сегодня. "
-        "Иногда достаточно сделать один небольшой шаг."
-    ),
-    (
-        "💡 <b>Совет дня</b>\n\n"
-        "Если мысли постоянно возвращаются к одной проблеме, "
-        "попробуйте записать их на бумагу."
-    ),
-    (
-        "💡 <b>Совет дня</b>\n\n"
-        "Не требуйте от себя максимальной продуктивности каждый день."
-    ),
-    (
-        "💡 <b>Совет дня</b>\n\n"
-        "Если ситуация кажется огромной, разделите её "
-        "на самое маленькое действие."
-    ),
-    (
-        "💡 <b>Совет дня</b>\n\n"
-        "Просить о помощи — нормально."
-    ),
-]
-
-
-def is_admin(user_id: int) -> bool:
-    return user_id in ADMIN_IDS
 
 
 def materials_keyboard():
@@ -140,6 +104,15 @@ def materials_keyboard():
     )
 
 
+DAILY_TIPS = [
+    "Не обязательно решать всю проблему сегодня. Иногда достаточно сделать один небольшой шаг.",
+    "Если мысли постоянно возвращаются к одной проблеме, попробуйте записать их.",
+    "Не требуйте от себя максимальной продуктивности каждый день.",
+    "Если ситуация кажется огромной, разделите её на самое маленькое действие.",
+    "Просить о помощи — нормально.",
+]
+
+
 def daily_tip_keyboard():
     return InlineKeyboardMarkup(
         inline_keyboard=[
@@ -153,8 +126,15 @@ def daily_tip_keyboard():
     )
 
 
+def is_admin(user_id: int) -> bool:
+    return user_id in ADMIN_IDS
+
+
 @router.message(Command("start"))
-async def start_command(message: Message, state: FSMContext):
+async def start_command(
+    message: Message,
+    state: FSMContext,
+):
     await state.clear()
 
     if is_admin(message.from_user.id):
@@ -162,6 +142,7 @@ async def start_command(message: Message, state: FSMContext):
             "👋 Добро пожаловать в «Проблем нет»\n\n"
             "👨‍💼 Вы вошли как администратор.\n\n"
             "Сейчас включён режим пользователя.",
+            parse_mode="HTML",
             reply_markup=admin_user_keyboard,
         )
         return
@@ -170,8 +151,8 @@ async def start_command(message: Message, state: FSMContext):
         "👋 Добро пожаловать в «Проблем нет»\n\n"
         "Это пространство, где можно поделиться тем, "
         "что тревожит или беспокоит.\n\n"
-        "💙 Здесь нет осуждения и оценок.\n\n"
-        "📝 Нажмите кнопку ниже и расскажите свою историю.\n\n"
+        "💙 Здесь нет осуждения.\n\n"
+        "📝 Нажмите «Поделиться историей».\n\n"
         "Помните: проблем нет.",
         reply_markup=main_keyboard,
     )
@@ -180,7 +161,8 @@ async def start_command(message: Message, state: FSMContext):
 @router.message(F.text == "💡 Совет дня")
 async def daily_tip(message: Message):
     await message.answer(
-        random.choice(DAILY_TIPS),
+        "💡 <b>Совет дня</b>\n\n"
+        + random.choice(DAILY_TIPS),
         parse_mode="HTML",
         reply_markup=daily_tip_keyboard(),
     )
@@ -231,8 +213,7 @@ async def switch_to_user_mode(
     await state.clear()
 
     await message.answer(
-        "👤 <b>Режим пользователя</b>\n\n"
-        "Теперь вы можете тестировать бота как обычный пользователь.",
+        "👤 <b>Режим пользователя</b>",
         parse_mode="HTML",
         reply_markup=admin_user_keyboard,
     )
@@ -243,7 +224,7 @@ async def help_command(message: Message):
     await message.answer(
         "💡 <b>Как пользоваться ботом:</b>\n\n"
         "1️⃣ Нажмите «📝 Поделиться историей».\n"
-        "2️⃣ Напишите историю.\n"
+        "2️⃣ Напишите свою историю.\n"
         "3️⃣ Бот подготовит материал.\n"
         "4️⃣ Администратор проверит его.\n\n"
         "Если нужна поддержка — используйте "
@@ -258,7 +239,10 @@ async def emergency_support(
     state: FSMContext,
 ):
     await state.clear()
-    await state.set_state(StoryState.waiting_for_support_method)
+
+    await state.set_state(
+        StoryState.waiting_for_support_method
+    )
 
     from keyboards import support_method_keyboard
 
@@ -276,16 +260,21 @@ async def receive_support_message(
     state: FSMContext,
 ):
     if not message.text:
-        await message.answer("❗ Отправьте текстовое сообщение.")
+        await message.answer(
+            "❗ Отправьте текстовое сообщение."
+        )
         return
 
-    text = message.text.strip()
+    support_text = message.text.strip()
 
-    if len(text) < 2:
-        await message.answer("✏️ Напишите немного подробнее.")
+    if len(support_text) < 2:
+        await message.answer(
+            "✏️ Напишите немного подробнее."
+        )
         return
 
     user_id = message.from_user.id
+
     dialog = get_open_dialog_by_user(user_id)
 
     if dialog:
@@ -295,24 +284,25 @@ async def receive_support_message(
             dialog_id,
             user_id,
             "user",
-            text,
+            support_text,
         )
     else:
         dialog_id = create_support_dialog(
             user_id,
-            text,
+            support_text,
         )
 
     await notify_admins_about_message(
         message,
         dialog_id,
-        text,
+        support_text,
     )
 
     await state.clear()
 
     await message.answer(
-        "💙 Сообщение передано модератору.",
+        "💙 Сообщение передано модератору.\n\n"
+        "Диалог остаётся открытым.",
         reply_markup=personal_contact_keyboard(),
     )
 
@@ -351,8 +341,10 @@ async def active_support_message(
     if not text:
         return
 
+    dialog_id = dialog["id"]
+
     add_support_message(
-        dialog["id"],
+        dialog_id,
         message.from_user.id,
         "user",
         text,
@@ -360,7 +352,7 @@ async def active_support_message(
 
     await notify_admins_about_message(
         message,
-        dialog["id"],
+        dialog_id,
         text,
     )
 
@@ -387,11 +379,13 @@ async def notify_admins_about_message(
             await message.bot.send_message(
                 admin_id,
                 admin_text,
-                reply_markup=support_new_message_keyboard(dialog_id),
+                reply_markup=support_new_message_keyboard(
+                    dialog_id
+                ),
                 parse_mode="HTML",
             )
         except Exception as error:
-            print(f"DIALOG MESSAGE ERROR: {error}")
+            print(f"DIALOG ADMIN ERROR: {error}")
 
 
 @router.message(F.text == "📝 Поделиться историей")
@@ -400,7 +394,10 @@ async def start_story(
     state: FSMContext,
 ):
     await state.clear()
-    await state.set_state(StoryState.waiting_for_story)
+
+    await state.set_state(
+        StoryState.waiting_for_story
+    )
 
     await message.answer(
         "💙 Расскажите свою историю.\n\n"
@@ -416,7 +413,7 @@ async def receive_story(
 ):
     if not message.text:
         await message.answer(
-            "❗ Отправьте историю текстовым сообщением."
+            "❗ Отправьте историю обычным текстом."
         )
         return
 
@@ -424,8 +421,7 @@ async def receive_story(
 
     if len(story) < 10:
         await message.answer(
-            "✏️ История слишком короткая.\n\n"
-            "Напишите немного подробнее."
+            "✏️ История слишком короткая."
         )
         return
 
@@ -434,7 +430,9 @@ async def receive_story(
         story,
     )
 
-    await message.answer("🤖 Анализирую вашу историю...")
+    await message.answer(
+        "🤖 Анализирую вашу историю..."
+    )
 
     try:
         ai_result = await analyze_story(story)
@@ -461,11 +459,14 @@ async def receive_story(
     moderation_text = (
         f"📥 <b>Новая история #{story_id}</b>\n\n"
         f"👤 User ID: <code>{message.from_user.id}</code>\n\n"
-        f"💭 <b>Текст:</b>\n\n{escape(story)}\n\n"
+        f"💭 <b>Текст:</b>\n\n"
+        f"{escape(story)}\n\n"
         "━━━━━━━━━━━━━━\n\n"
-        f"🤖 <b>Анализ ИИ:</b>\n\n{escape(ai_result)}\n\n"
+        f"🤖 <b>Анализ ИИ:</b>\n\n"
+        f"{escape(ai_result)}\n\n"
         "━━━━━━━━━━━━━━\n\n"
-        f"📌 <b>Готовый пост:</b>\n\n{escape(post_text)}"
+        f"📌 <b>Готовый пост:</b>\n\n"
+        f"{escape(post_text)}"
     )
 
     for admin_id in ADMIN_IDS:
@@ -484,16 +485,15 @@ async def receive_story(
 
     await state.clear()
 
+    await message.answer(
+        "💙 Спасибо, что поделились.\n\n"
+        "Ваша история отправлена на рассмотрение."
+    )
+
     if is_admin(message.from_user.id):
         await message.answer(
-            "💙 История отправлена на рассмотрение.",
+            "👤 Вы остались в режиме пользователя.",
             reply_markup=admin_user_keyboard,
-        )
-    else:
-        await message.answer(
-            "💙 Спасибо, что поделились.\n\n"
-            "Ваша история отправлена на рассмотрение.",
-            reply_markup=main_keyboard,
         )
 
 
@@ -528,7 +528,8 @@ async def dialogs_menu(message: Message):
             f"💬 <b>Диалог #{dialog['id']}</b>\n\n"
             f"👤 User ID: <code>{dialog['user_id']}</code>\n\n"
             f"{'🔴 Новых сообщений: ' + str(unread) if unread else '🟢 Нет новых сообщений'}\n\n"
-            f"Последнее сообщение:\n{escape(last_message)}"
+            f"Последнее сообщение:\n"
+            f"{escape(last_message)}"
         )
 
         keyboard = InlineKeyboardMarkup(
@@ -616,17 +617,21 @@ async def all_stories(message: Message):
     text = "📁 <b>Все истории</b>\n\n"
 
     for story in stories[:30]:
-        status = story["status"]
-
         icons = {
             "waiting": "⏳",
             "published": "✅",
             "rejected": "❌",
         }
 
-        icon = icons.get(status, "📌")
+        icon = icons.get(
+            story["status"],
+            "📌",
+        )
 
-        text += f"{icon} #{story['id']} — {status}\n"
+        text += (
+            f"{icon} #{story['id']} — "
+            f"{story['status']}\n"
+        )
 
     await message.answer(
         text,
