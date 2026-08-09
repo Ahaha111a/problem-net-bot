@@ -12,17 +12,17 @@ async def main():
     print("🚀 Запуск бота...")
 
     init_db()
+    print("✅ База данных инициализирована")
 
-    bot = Bot(
-        token=BOT_TOKEN
-    )
+    bot = Bot(token=BOT_TOKEN)
 
     dp = Dispatcher()
 
     dp.include_router(router)
     dp.include_router(callback_router)
 
-    print("✅ Бот запущен")
+    print("✅ Обработчики подключены")
+    print("🚀 Бот запущен")
 
     try:
         await dp.start_polling(bot)
