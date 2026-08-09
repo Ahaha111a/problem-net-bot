@@ -7,6 +7,7 @@ from config import DB_PATH
 def get_connection():
 
     connection = sqlite3.connect(DB_PATH)
+
     connection.row_factory = sqlite3.Row
 
     return connection
@@ -47,7 +48,9 @@ def init_db():
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             user_id INTEGER NOT NULL,
             status TEXT NOT NULL DEFAULT 'open',
+            support_status TEXT NOT NULL DEFAULT 'new',
             assigned_admin_id INTEGER,
+            personal_requested INTEGER NOT NULL DEFAULT 0,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             last_message TEXT,
@@ -60,31 +63,50 @@ def init_db():
     # МИГРАЦИЯ СТАРОЙ БАЗЫ
     # =====================================================
 
-    try:
-
-        cursor.execute(
+    migrations = [
+        (
+            "unread_admin",
             """
             ALTER TABLE support_dialogs
             ADD COLUMN unread_admin
             INTEGER NOT NULL DEFAULT 0
             """
-        )
-
-    except sqlite3.OperationalError:
-        pass
-
-    try:
-
-        cursor.execute(
+        ),
+        (
+            "unread_user",
             """
             ALTER TABLE support_dialogs
             ADD COLUMN unread_user
             INTEGER NOT NULL DEFAULT 0
             """
-        )
+        ),
+        (
+            "support_status",
+            """
+            ALTER TABLE support_dialogs
+            ADD COLUMN support_status
+            TEXT NOT NULL DEFAULT 'new'
+            """
+        ),
+        (
+            "personal_requested",
+            """
+            ALTER TABLE support_dialogs
+            ADD COLUMN personal_requested
+            INTEGER NOT NULL DEFAULT 0
+            """
+        ),
+    ]
 
-    except sqlite3.OperationalError:
-        pass
+    for column_name, query in migrations:
+
+        try:
+
+            cursor.execute(query)
+
+        except sqlite3.OperationalError:
+
+            pass
 
     # =====================================================
     # СООБЩЕНИЯ ДИАЛОГОВ
@@ -235,7 +257,8 @@ def publish_story(
     connection.execute(
         """
         UPDATE stories
-        SET status = 'published',
+        SET
+            status = 'published',
             published_at = ?
         WHERE id = ?
         """,
@@ -376,11 +399,13 @@ def create_support_dialog(
         INSERT INTO support_dialogs (
             user_id,
             status,
+            support_status,
             last_message,
             unread_admin,
-            unread_user
+            unread_user,
+            personal_requested
         )
-        VALUES (?, 'open', ?, 1, 0)
+        VALUES (?, 'open', 'new', ?, 1, 0, 0)
         """,
         (
             user_id,
@@ -449,7 +474,8 @@ def add_support_message(
             SET
                 last_message = ?,
                 updated_at = CURRENT_TIMESTAMP,
-                unread_admin = unread_admin + 1
+                unread_admin = unread_admin + 1,
+                support_status = 'new'
             WHERE id = ?
             """,
             (
@@ -466,7 +492,8 @@ def add_support_message(
             SET
                 last_message = ?,
                 updated_at = CURRENT_TIMESTAMP,
-                unread_user = unread_user + 1
+                unread_user = unread_user + 1,
+                support_status = 'in_progress'
             WHERE id = ?
             """,
             (
@@ -554,11 +581,136 @@ def assign_dialog(
         UPDATE support_dialogs
         SET
             assigned_admin_id = ?,
+            support_status = 'in_progress',
             updated_at = CURRENT_TIMESTAMP
         WHERE id = ?
         """,
         (
             admin_id,
+            dialog_id,
+        ),
+    )
+
+    connection.commit()
+    connection.close()
+
+
+def unassign_dialog(
+    dialog_id: int,
+):
+
+    connection = get_connection()
+
+    connection.execute(
+        """
+        UPDATE support_dialogs
+        SET
+            assigned_admin_id = NULL,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+        """,
+        (
+            dialog_id,
+        ),
+    )
+
+    connection.commit()
+    connection.close()
+
+
+def set_dialog_status(
+    dialog_id: int,
+    support_status: str,
+):
+
+    connection = get_connection()
+
+    connection.execute(
+        """
+        UPDATE support_dialogs
+        SET
+            support_status = ?,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+        """,
+        (
+            support_status,
+            dialog_id,
+        ),
+    )
+
+    connection.commit()
+    connection.close()
+
+
+def request_personal_contact(
+    dialog_id: int,
+):
+
+    connection = get_connection()
+
+    cursor = connection.cursor()
+
+    cursor.execute(
+        """
+        SELECT personal_requested
+        FROM support_dialogs
+        WHERE id = ?
+        """,
+        (
+            dialog_id,
+        ),
+    )
+
+    row = cursor.fetchone()
+
+    if row is None:
+
+        connection.close()
+
+        return False
+
+    already_requested = bool(
+        row["personal_requested"]
+    )
+
+    if not already_requested:
+
+        cursor.execute(
+            """
+            UPDATE support_dialogs
+            SET
+                personal_requested = 1,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+            """,
+            (
+                dialog_id,
+            ),
+        )
+
+        connection.commit()
+
+    connection.close()
+
+    return not already_requested
+
+
+def clear_personal_request(
+    dialog_id: int,
+):
+
+    connection = get_connection()
+
+    connection.execute(
+        """
+        UPDATE support_dialogs
+        SET
+            personal_requested = 0,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+        """,
+        (
             dialog_id,
         ),
     )
@@ -578,6 +730,8 @@ def close_dialog(
         UPDATE support_dialogs
         SET
             status = 'closed',
+            support_status = 'closed',
+            assigned_admin_id = NULL,
             updated_at = CURRENT_TIMESTAMP
         WHERE id = ?
         """,
