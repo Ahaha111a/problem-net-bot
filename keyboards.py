@@ -30,11 +30,6 @@ main_keyboard = ReplyKeyboardMarkup(
                 text="🆘 Экстренная поддержка"
             ),
         ],
-        [
-            KeyboardButton(
-                text="📞 Связь с сотрудником"
-            ),
-        ],
     ],
     resize_keyboard=True,
 )
@@ -110,6 +105,76 @@ def personal_contact_keyboard():
                 InlineKeyboardButton(
                     text="📞 Связаться со мной лично",
                     callback_data="support_personal_request",
+                )
+            ]
+        ]
+    )
+
+
+# =========================================================
+# МАТЕРИАЛЫ
+# =========================================================
+
+def materials_keyboard():
+
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="😟 Тревога",
+                    callback_data="material:anxiety",
+                ),
+                InlineKeyboardButton(
+                    text="😔 Плохое настроение",
+                    callback_data="material:mood",
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    text="😤 Стресс",
+                    callback_data="material:stress",
+                ),
+                InlineKeyboardButton(
+                    text="💭 Навязчивые мысли",
+                    callback_data="material:thoughts",
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    text="🤝 Отношения",
+                    callback_data="material:relationships",
+                ),
+                InlineKeyboardButton(
+                    text="💤 Сон",
+                    callback_data="material:sleep",
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    text="💪 Самооценка",
+                    callback_data="material:selfesteem",
+                ),
+                InlineKeyboardButton(
+                    text="🧘 Успокоиться сейчас",
+                    callback_data="material:calm",
+                ),
+            ],
+        ]
+    )
+
+
+# =========================================================
+# КНОПКИ ПОСЛЕ МАТЕРИАЛА
+# =========================================================
+
+def material_actions_keyboard():
+
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="🆘 Нужна экстренная поддержка",
+                    callback_data="material:support",
                 )
             ]
         ]
@@ -197,18 +262,6 @@ def support_dialog_keyboard(
             ],
             [
                 InlineKeyboardButton(
-                    text="⏸ Ожидаем пользователя",
-                    callback_data=f"dialog_waiting:{dialog_id}",
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    text="🔴 Закрыть диалог",
-                    callback_data=f"dialog_close:{dialog_id}",
-                )
-            ],
-            [
-                InlineKeyboardButton(
                     text="⬅️ Выйти из диалога",
                     callback_data=f"dialog_exit:{dialog_id}",
                 )
@@ -236,7 +289,7 @@ def personal_request_keyboard(
             ],
             [
                 InlineKeyboardButton(
-                    text="💬 Откр2ыть диалог",
+                    text="💬 Открыть диалог",
                     callback_data=f"dialog_open:{dialog_id}",
                 )
             ],
