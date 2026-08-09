@@ -1432,3 +1432,55 @@ async def moderator_dialog_message(
             "❌ Не удалось отправить сообщение "
             "пользователю."
         )
+
+
+# =========================================================
+# ПОЛЕЗНЫЕ МАТЕРИАЛЫ
+# =========================================================
+
+@callback_router.callback_query(
+    F.data.startswith("material:")
+)
+async def material_handler(
+    callback: CallbackQuery,
+):
+
+    material_key = callback.data.split(":", 1)[1]
+
+    if material_key == "support":
+
+        await callback.answer()
+
+        try:
+            await callback.message.answer(
+                "🆘 Если вам сейчас нужна поддержка, "
+                "нажмите кнопку «🆘 Экстренная поддержка» "
+                "в главном меню."
+            )
+        except Exception:
+            pass
+
+        return
+
+    from handlers import MATERIALS
+
+    material_text = MATERIALS.get(
+        material_key
+    )
+
+    if not material_text:
+
+        await callback.answer(
+            "❌ Материал не найден.",
+            show_alert=True,
+        )
+
+        return
+
+    await callback.answer()
+
+    await callback.message.answer(
+        material_text,
+        parse_mode="HTML",
+        reply_markup=material_actions_keyboard(),
+    )
