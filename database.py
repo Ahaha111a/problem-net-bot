@@ -16,8 +16,9 @@ def get_connection():
 
 def init_db():
     connection = get_connection()
+    cursor = connection.cursor()
 
-    connection.execute(
+    cursor.execute(
         """
         CREATE TABLE IF NOT EXISTS stories (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -31,7 +32,7 @@ def init_db():
         """
     )
 
-    connection.execute(
+    cursor.execute(
         """
         CREATE TABLE IF NOT EXISTS support_dialogs (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -48,7 +49,7 @@ def init_db():
         """
     )
 
-    connection.execute(
+    cursor.execute(
         """
         CREATE TABLE IF NOT EXISTS support_messages (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -66,10 +67,16 @@ def init_db():
     connection.close()
 
 
+# =========================================================
+# STORIES
+# =========================================================
+
 def create_story(user_id: int, text: str):
     connection = get_connection()
 
-    cursor = connection.execute(
+    cursor = connection.cursor()
+
+    cursor.execute(
         """
         INSERT INTO stories (user_id, text, status)
         VALUES (?, ?, 'waiting')
@@ -203,7 +210,10 @@ def get_stats():
     connection = get_connection()
 
     total = connection.execute(
-        "SELECT COUNT(*) FROM stories"
+        """
+        SELECT COUNT(*)
+        FROM stories
+        """
     ).fetchone()[0]
 
     waiting = connection.execute(
@@ -240,10 +250,19 @@ def get_stats():
     }
 
 
-def create_support_dialog(user_id: int, first_message: str):
+# =========================================================
+# SUPPORT
+# =========================================================
+
+def create_support_dialog(
+    user_id: int,
+    first_message: str,
+):
     connection = get_connection()
 
-    cursor = connection.execute(
+    cursor = connection.cursor()
+
+    cursor.execute(
         """
         INSERT INTO support_dialogs (
             user_id,
@@ -259,7 +278,7 @@ def create_support_dialog(user_id: int, first_message: str):
 
     dialog_id = cursor.lastrowid
 
-    connection.execute(
+    cursor.execute(
         """
         INSERT INTO support_messages (
             dialog_id,
@@ -423,7 +442,10 @@ def assign_dialog(dialog_id: int, admin_id: int):
             updated_at = CURRENT_TIMESTAMP
         WHERE id = ?
         """,
-        (admin_id, dialog_id),
+        (
+            admin_id,
+            dialog_id,
+        ),
     )
 
     connection.commit()
@@ -492,7 +514,10 @@ def set_dialog_status(dialog_id: int, status: str):
             updated_at = CURRENT_TIMESTAMP
         WHERE id = ?
         """,
-        (status, dialog_id),
+        (
+            status,
+            dialog_id,
+        ),
     )
 
     connection.commit()
