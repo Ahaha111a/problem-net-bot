@@ -32,7 +32,7 @@ main_keyboard = ReplyKeyboardMarkup(
         ],
         [
             KeyboardButton(
-                text="📞 Связаться с сотрудником"
+                text="📞 Связь с сотрудником"
             ),
         ],
     ],
@@ -197,6 +197,18 @@ def support_dialog_keyboard(
             ],
             [
                 InlineKeyboardButton(
+                    text="⏸ Ожидаем пользователя",
+                    callback_data=f"dialog_waiting:{dialog_id}",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="🔴 Закрыть диалог",
+                    callback_data=f"dialog_close:{dialog_id}",
+                )
+            ],
+            [
+                InlineKeyboardButton(
                     text="⬅️ Выйти из диалога",
                     callback_data=f"dialog_exit:{dialog_id}",
                 )
@@ -224,7 +236,7 @@ def personal_request_keyboard(
             ],
             [
                 InlineKeyboardButton(
-                    text="💬 Открыть диалог",
+                    text="💬 Откр2ыть диалог",
                     callback_data=f"dialog_open:{dialog_id}",
                 )
             ],
