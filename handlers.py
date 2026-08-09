@@ -106,11 +106,11 @@ async def emergency_support(
     state: FSMContext,
 ):
 
+    await state.clear()
+
     dialog = get_open_dialog_by_user(
         message.from_user.id
     )
-
-    await state.clear()
 
     if dialog:
 
@@ -118,10 +118,21 @@ async def emergency_support(
             dialog["id"]
         )
 
+        await state.update_data(
+            support_dialog_id=dialog["id"]
+        )
+
+        await state.set_state(
+            StoryState.waiting_for_support_message
+        )
+
         await message.answer(
-            "💬 У вас уже есть открытый диалог с модератором.\n\n"
-            "Просто напишите сообщение — оно будет "
-            "передано модератору."
+            "🆘 <b>Ваш диалог с поддержкой</b>\n\n"
+            "Можете продолжить писать здесь.\n"
+            "Все сообщения будут переданы модератору.\n\n"
+            "Если хотите отправить новое сообщение, "
+            "напишите его ниже.",
+            parse_mode="HTML",
         )
 
         return
@@ -131,12 +142,11 @@ async def emergency_support(
     )
 
     await message.answer(
-        "🆘 <b>Экстренная поддержка</b>\n\n"
+        "🆘 <b>Поддержка</b>\n\n"
         "Если вам сейчас очень тяжело или вам "
         "нужна помощь, расскажите нам, что происходит.\n\n"
         "Ваше сообщение будет передано модератору. "
-        "После этого вы сможете продолжить диалог "
-        "прямо через этот бот.\n\n"
+        "Вы сможете продолжить диалог через бота.\n\n"
         "⚠️ Если вы находитесь в непосредственной опасности, "
         "обратитесь в местные экстренные службы.\n\n"
         "Напишите сообщение ниже.",
@@ -179,13 +189,30 @@ async def receive_support_message(
 
     user_id = message.from_user.id
 
-    dialog_id = create_support_dialog(
-        user_id=user_id,
-        first_message=support_text,
+    existing_dialog = get_open_dialog_by_user(
+        user_id
     )
 
+    if existing_dialog:
+
+        dialog_id = existing_dialog["id"]
+
+        add_support_message(
+            dialog_id=dialog_id,
+            sender_id=user_id,
+            sender_type="user",
+            text=support_text,
+        )
+
+    else:
+
+        dialog_id = create_support_dialog(
+            user_id=user_id,
+            first_message=support_text,
+        )
+
     support_text_for_admin = (
-        "🆘 <b>НОВЫЙ ДИАЛОГ</b>\n\n"
+        "🆘 <b>НОВОЕ СООБЩЕНИЕ</b>\n\n"
         f"💬 <b>Диалог #{dialog_id}</b>\n"
         f"👤 <b>User ID:</b> "
         f"<code>{user_id}</code>\n\n"
@@ -249,11 +276,9 @@ async def active_support_message(
     state: FSMContext,
 ):
 
-    # Администраторов здесь не обрабатываем
     if is_admin(message.from_user.id):
         return
 
-    # Не перехватываем команды и кнопки
     if message.text in [
         "📝 Поделиться историей",
         "💡 Совет дня",
@@ -517,10 +542,26 @@ async def dialogs_menu(
         if len(last_message) > 100:
             last_message = last_message[:100] + "..."
 
+        unread_admin = dialog["unread_admin"] or 0
+
+        if unread_admin > 0:
+
+            unread_text = (
+                f"🔴 <b>{unread_admin} новых "
+                f"сообщений</b>"
+            )
+
+        else:
+
+            unread_text = (
+                "🟢 Нет новых сообщений"
+            )
+
         text = (
             f"💬 <b>Диалог #{dialog['id']}</b>\n\n"
             f"👤 User ID: "
             f"<code>{dialog['user_id']}</code>\n\n"
+            f"{unread_text}\n\n"
             f"Последнее сообщение:\n"
             f"{last_message}"
         )
@@ -644,10 +685,13 @@ async def all_stories(
 
         if status == "waiting":
             status_icon = "⏳"
+
         elif status == "published":
             status_icon = "✅"
+
         elif status == "rejected":
             status_icon = "❌"
+
         else:
             status_icon = "📌"
 
@@ -675,16 +719,7 @@ async def back(
 
     await state.clear()
 
-    if is_admin(message.from_user.id):
-
-        await message.answer(
-            "↩️ Админ-панель",
-            reply_markup=admin_keyboard,
-        )
-
-    else:
-
-        await message.answer(
-            "↩️ Главное меню",
-            reply_markup=main_keyboard,
-        )
+    await message.answer(
+        "↩️ Главное меню",
+        reply_markup=main_keyboard,
+    )
