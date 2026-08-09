@@ -108,7 +108,10 @@ def material_actions_keyboard():
     )
 
 
-def moderation_keyboard(story_id: int, user_id: int):
+def moderation_keyboard(
+    story_id: int,
+    user_id: int,
+):
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
@@ -137,7 +140,9 @@ def moderation_keyboard(story_id: int, user_id: int):
     )
 
 
-def support_new_message_keyboard(dialog_id: int):
+def support_new_message_keyboard(
+    dialog_id: int,
+):
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
@@ -156,7 +161,9 @@ def support_new_message_keyboard(dialog_id: int):
     )
 
 
-def support_dialog_keyboard(dialog_id: int):
+def support_dialog_keyboard(
+    dialog_id: int,
+):
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
@@ -187,7 +194,10 @@ def support_dialog_keyboard(dialog_id: int):
     )
 
 
-def personal_request_keyboard(dialog_id: int, user_id: int):
+def personal_request_keyboard(
+    dialog_id: int,
+    user_id: int,
+):
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
