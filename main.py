@@ -7,28 +7,36 @@ from database import init_db
 from handlers import router
 from callbacks import callback_router
 
+
 async def main():
-print("🚀 Запуск бота...")
+    print("🚀 Запуск бота...")
 
-init_db()
+    # Инициализация базы данных
+    init_db()
+    print("✅ База данных инициализирована")
 
-bot = Bot(token=BOT_TOKEN)
+    # Создаём бота
+    bot = Bot(token=BOT_TOKEN)
+    print("✅ Bot создан")
 
-dp = Dispatcher()
+    # Создаём диспетчер
+    dp = Dispatcher()
 
-# Основной пользовательский router
-dp.include_router(router)
+    # Подключаем обработчики пользователей
+    dp.include_router(router)
 
-# Callback и административные действия
-dp.include_router(callback_router)
+    # Подключаем обработчики callback-кнопок
+    dp.include_router(callback_router)
 
-print("✅ Бот запущен")
+    print("✅ Обработчики подключены")
+    print("🚀 Бот запущен и ожидает сообщения...")
 
-try:
-    await dp.start_polling(bot)
+    try:
+        await dp.start_polling(bot)
+    finally:
+        await bot.session.close()
+        print("🛑 Бот остановлен")
 
-finally:
-    await bot.session.close()
 
-if name == "main":
-asyncio.run(main())
+if __name__ == "__main__":
+    asyncio.run(main())
