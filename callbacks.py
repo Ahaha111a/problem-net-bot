@@ -801,4 +801,4 @@ async def moderator_dialog_message(
 
         await message.answer(
             "❌ Не удалось отправить сообщение пользователю."
-        )1
+        )
