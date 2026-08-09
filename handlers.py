@@ -717,8 +717,22 @@ async def back(
     state: FSMContext,
 ):
 
+    # Сбрасываем любое активное состояние
     await state.clear()
 
+    # Если это администратор —
+    # возвращаем админское меню
+    if is_admin(message.from_user.id):
+
+        await message.answer(
+            "↩️ Админ-панель",
+            reply_markup=admin_keyboard,
+        )
+
+        return
+
+    # Если обычный пользователь —
+    # возвращаем обычное меню
     await message.answer(
         "↩️ Главное меню",
         reply_markup=main_keyboard,
