@@ -36,6 +36,40 @@ main_keyboard = ReplyKeyboardMarkup(
 
 
 # =========================================================
+# ГЛАВНОЕ МЕНЮ АДМИНИСТРАТОРА В РЕЖИМЕ ПОЛЬЗОВАТЕЛЯ
+# =========================================================
+
+admin_user_keyboard = ReplyKeyboardMarkup(
+    keyboard=[
+        [
+            KeyboardButton(
+                text="📝 Поделиться историей"
+            )
+        ],
+        [
+            KeyboardButton(
+                text="💡 Совет дня"
+            ),
+            KeyboardButton(
+                text="📚 Полезные материалы"
+            ),
+        ],
+        [
+            KeyboardButton(
+                text="🆘 Экстренная поддержка"
+            ),
+        ],
+        [
+            KeyboardButton(
+                text="👨‍💼 Админ-панель"
+            ),
+        ],
+    ],
+    resize_keyboard=True,
+)
+
+
+# =========================================================
 # АДМИН-ПАНЕЛЬ
 # =========================================================
 
@@ -61,7 +95,7 @@ admin_keyboard = ReplyKeyboardMarkup(
         ],
         [
             KeyboardButton(
-                text="⬅️ Назад"
+                text="👤 Режим пользователя"
             ),
         ],
     ],
@@ -105,76 +139,6 @@ def personal_contact_keyboard():
                 InlineKeyboardButton(
                     text="📞 Связаться со мной лично",
                     callback_data="support_personal_request",
-                )
-            ]
-        ]
-    )
-
-
-# =========================================================
-# МАТЕРИАЛЫ
-# =========================================================
-
-def materials_keyboard():
-
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(
-                    text="😟 Тревога",
-                    callback_data="material:anxiety",
-                ),
-                InlineKeyboardButton(
-                    text="😔 Плохое настроение",
-                    callback_data="material:mood",
-                ),
-            ],
-            [
-                InlineKeyboardButton(
-                    text="😤 Стресс",
-                    callback_data="material:stress",
-                ),
-                InlineKeyboardButton(
-                    text="💭 Навязчивые мысли",
-                    callback_data="material:thoughts",
-                ),
-            ],
-            [
-                InlineKeyboardButton(
-                    text="🤝 Отношения",
-                    callback_data="material:relationships",
-                ),
-                InlineKeyboardButton(
-                    text="💤 Сон",
-                    callback_data="material:sleep",
-                ),
-            ],
-            [
-                InlineKeyboardButton(
-                    text="💪 Самооценка",
-                    callback_data="material:selfesteem",
-                ),
-                InlineKeyboardButton(
-                    text="🧘 Успокоиться сейчас",
-                    callback_data="material:calm",
-                ),
-            ],
-        ]
-    )
-
-
-# =========================================================
-# КНОПКИ ПОСЛЕ МАТЕРИАЛА
-# =========================================================
-
-def material_actions_keyboard():
-
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(
-                    text="🆘 Нужна экстренная поддержка",
-                    callback_data="material:support",
                 )
             ]
         ]
