@@ -30,6 +30,11 @@ main_keyboard = ReplyKeyboardMarkup(
                 text="🆘 Экстренная поддержка"
             ),
         ],
+        [
+            KeyboardButton(
+                text="📞 Связаться с сотрудником"
+            ),
+        ],
     ],
     resize_keyboard=True,
 )
