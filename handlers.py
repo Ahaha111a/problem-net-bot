@@ -35,7 +35,6 @@ from keyboards import (
     moderation_keyboard,
     support_new_message_keyboard,
     personal_contact_keyboard,
-    support_method_keyboard,
 )
 
 
@@ -46,9 +45,7 @@ router = Router()
 # ПРОВЕРКА АДМИНИСТРАТОРА
 # =========================================================
 
-def is_admin(
-    user_id: int,
-) -> bool:
+def is_admin(user_id: int) -> bool:
 
     return user_id in ADMIN_IDS
 
@@ -60,10 +57,7 @@ def is_admin(
 @router.message(Command("start"))
 async def start_command(
     message: Message,
-    state: FSMContext,
 ):
-
-    await state.clear()
 
     await message.answer(
         "👋 Добро пожаловать в «Проблем нет»\n\n"
@@ -78,9 +72,7 @@ async def start_command(
         reply_markup=main_keyboard,
     )
 
-    if is_admin(
-        message.from_user.id
-    ):
+    if is_admin(message.from_user.id):
 
         await message.answer(
             "👨‍💼 Вы вошли как администратор.\n"
@@ -105,9 +97,9 @@ async def help_command(
         "2️⃣ Напишите свою историю.\n"
         "3️⃣ Бот подготовит материал для публикации.\n"
         "4️⃣ Администратор проверит материал.\n\n"
-        "🆘 Если нужна экстренная поддержка, "
-        "нажмите «🆘 Экстренная поддержка».\n\n"
-        "📞 Если хотите, чтобы с вами связался "
+        "🆘 Если вам нужна срочная поддержка, "
+        "используйте «Экстренная поддержка».\n\n"
+        "📞 Если вы хотите, чтобы с вами связался "
         "сотрудник лично, это можно запросить "
         "в любой момент.\n\n"
         "Спасибо за доверие 💙"
@@ -132,19 +124,76 @@ async def emergency_support(
         StoryState.waiting_for_support_method
     )
 
+    from keyboards import support_method_keyboard
+
     await message.answer(
         "🆘 <b>Экстренная поддержка</b>\n\n"
         "Выберите, как вы хотите продолжить общение:\n\n"
         "💬 <b>Продолжить в боте</b>\n"
-        "Вы будете переписываться с модератором "
-        "прямо здесь.\n\n"
-        "📞 <b>Связаться с сотрудником лично</b>\n"
+        "Вы будете переписываться с сотрудником "
+        "поддержки прямо здесь.\n\n"
+        "📞 <b>Связаться лично</b>\n"
         "Мы передадим сотруднику ваш запрос, "
-        "после чего он сможет открыть ваш профиль "
+        "и он сможет открыть ваш Telegram-профиль "
         "и написать вам напрямую.\n\n"
-        "💙 Диалог в боте при этом останется открытым.",
+        "💙 Вы сможете изменить решение позже.",
         parse_mode="HTML",
         reply_markup=support_method_keyboard(),
+    )
+
+
+# =========================================================
+# ЛИЧНЫЙ КОНТАКТ В ЛЮБОЙ МОМЕНТ
+# =========================================================
+
+@router.message(
+    F.text == "📞 Связь с сотрудником"
+)
+async def personal_contact_anytime(
+    message: Message,
+    state: FSMContext,
+):
+
+    await state.clear()
+
+    user_id = message.from_user.id
+
+    dialog = get_open_dialog_by_user(
+        user_id
+    )
+
+    if dialog:
+
+        dialog_id = dialog["id"]
+
+    else:
+
+        dialog_id = create_support_dialog(
+            user_id=user_id,
+            first_message=(
+                "Пользователь запросил "
+                "личный контакт с сотрудником поддержки."
+            ),
+        )
+
+    from callbacks import send_personal_request_to_admins
+
+    await send_personal_request_to_admins(
+        bot=message.bot,
+        dialog_id=dialog_id,
+        user_id=user_id,
+    )
+
+    await message.answer(
+        "📞 <b>Запрос отправлен</b>\n\n"
+        "Мы передали сотруднику поддержки "
+        "запрос на личный контакт.\n\n"
+        "Сотрудник сможет открыть ваш профиль "
+        "и написать вам напрямую.\n\n"
+        "💬 При этом вы можете продолжать "
+        "общение с поддержкой прямо здесь.",
+        parse_mode="HTML",
+        reply_markup=personal_contact_keyboard(),
     )
 
 
@@ -175,7 +224,7 @@ async def receive_support_message(
 
         await message.answer(
             "✏️ Напишите немного подробнее, "
-            "чтобы модератор смог вам ответить."
+            "чтобы сотрудник смог вам ответить."
         )
 
         return
@@ -213,61 +262,11 @@ async def receive_support_message(
     await state.clear()
 
     await message.answer(
-        "💙 Сообщение передано модератору.\n\n"
+        "💙 Сообщение передано сотруднику поддержки.\n\n"
         "Вы можете продолжать писать сюда.\n"
-        "Диалог останется открытым.",
-        reply_markup=personal_contact_keyboard(),
-    )
-
-
-# =========================================================
-# ЗАПРОС ЛИЧНОГО КОНТАКТА ИЗ ГЛАВНОГО МЕНЮ
-# =========================================================
-
-@router.message(
-    F.text == "📞 Связаться с сотрудником"
-)
-async def personal_contact_from_menu(
-    message: Message,
-    state: FSMContext,
-):
-
-    await state.clear()
-
-    user_id = message.from_user.id
-
-    dialog = get_open_dialog_by_user(
-        user_id
-    )
-
-    if dialog:
-
-        dialog_id = dialog["id"]
-
-    else:
-
-        dialog_id = create_support_dialog(
-            user_id=user_id,
-            first_message=(
-                "📞 Пользователь запросил "
-                "личный контакт с сотрудником поддержки."
-            ),
-        )
-
-    await notify_admins_about_personal_request(
-        message,
-        dialog_id,
-    )
-
-    await message.answer(
-        "📞 <b>Запрос отправлен</b>\n\n"
-        "Мы передали сотруднику поддержки "
-        "ваш запрос.\n\n"
-        "Сотрудник сможет открыть ваш Telegram-профиль "
-        "и написать вам напрямую.\n\n"
-        "💬 При этом вы можете продолжать общение "
-        "с поддержкой прямо в этом боте.",
-        parse_mode="HTML",
+        "Диалог останется открытым.\n\n"
+        "Если захотите, нажмите "
+        "«📞 Связаться со мной лично».",
         reply_markup=personal_contact_keyboard(),
     )
 
@@ -285,9 +284,7 @@ async def active_support_message(
     state: FSMContext,
 ):
 
-    if is_admin(
-        message.from_user.id
-    ):
+    if is_admin(message.from_user.id):
         return
 
     if message.text in [
@@ -295,7 +292,7 @@ async def active_support_message(
         "💡 Совет дня",
         "📚 Полезные материалы",
         "🆘 Экстренная поддержка",
-        "📞 Связаться с сотрудником",
+        "📞 Связь с сотрудником",
         "⬅️ Назад",
     ]:
         return
@@ -328,13 +325,13 @@ async def active_support_message(
     )
 
     await message.answer(
-        "💙 Сообщение передано модератору.",
+        "💙 Сообщение передано сотруднику поддержки.",
         reply_markup=personal_contact_keyboard(),
     )
 
 
 # =========================================================
-# УВЕДОМИТЬ МОДЕРАТОРОВ О СООБЩЕНИИ
+# УВЕДОМИТЬ МОДЕРАТОРОВ
 # =========================================================
 
 async def notify_admins_about_message(
@@ -344,8 +341,8 @@ async def notify_admins_about_message(
 ):
 
     admin_text = (
-        "💬 <b>Новое сообщение в диалоге</b>\n\n"
-        f"Диалог #{dialog_id}\n"
+        "🔴 <b>Новое сообщение в диалоге</b>\n\n"
+        f"💬 Диалог #{dialog_id}\n"
         f"👤 User ID: "
         f"<code>{message.from_user.id}</code>\n\n"
         f"{escape(text)}"
@@ -368,60 +365,6 @@ async def notify_admins_about_message(
 
             print(
                 f"DIALOG MESSAGE ADMIN ERROR: {error}"
-            )
-
-
-# =========================================================
-# УВЕДОМИТЬ МОДЕРАТОРОВ О ЛИЧНОМ КОНТАКТЕ
-# =========================================================
-
-async def notify_admins_about_personal_request(
-    message: Message,
-    dialog_id: int,
-):
-
-    user_id = message.from_user.id
-
-    admin_text = (
-        "📞 <b>ЗАПРОС НА ЛИЧНЫЙ КОНТАКТ</b>\n\n"
-        f"💬 Диалог #{dialog_id}\n"
-        f"👤 User ID: "
-        f"<code>{user_id}</code>\n\n"
-        "Пользователь хочет, чтобы "
-        "сотрудник поддержки связался "
-        "с ним лично."
-    )
-
-    for admin_id in ADMIN_IDS:
-
-        try:
-
-            await message.bot.send_message(
-                admin_id,
-                admin_text,
-                reply_markup=InlineKeyboardMarkup(
-                    inline_keyboard=[
-                        [
-                            InlineKeyboardButton(
-                                text="📞 Открыть профиль",
-                                url=f"tg://user?id={user_id}",
-                            )
-                        ],
-                        [
-                            InlineKeyboardButton(
-                                text="💬 Открыть диалог",
-                                callback_data=f"dialog_open:{dialog_id}",
-                            )
-                        ],
-                    ]
-                ),
-                parse_mode="HTML",
-            )
-
-        except Exception as error:
-
-            print(
-                f"PERSONAL REQUEST ADMIN ERROR: {error}"
             )
 
 
@@ -585,9 +528,7 @@ async def admin_panel(
     message: Message,
 ):
 
-    if not is_admin(
-        message.from_user.id
-    ):
+    if not is_admin(message.from_user.id):
         return
 
     stats = get_stats()
@@ -619,9 +560,7 @@ async def dialogs_menu(
     message: Message,
 ):
 
-    if not is_admin(
-        message.from_user.id
-    ):
+    if not is_admin(message.from_user.id):
         return
 
     dialogs = get_open_dialogs()
@@ -653,8 +592,22 @@ async def dialogs_menu(
                 last_message[:100] + "..."
             )
 
-        unread = (
-            dialog["unread_admin"] or 0
+        unread = dialog["unread_admin"] or 0
+
+        support_status = (
+            dialog["support_status"] or "new"
+        )
+
+        status_names = {
+            "new": "🔴 Новый",
+            "in_progress": "🟡 В работе",
+            "waiting_user": "🟠 Ожидает пользователя",
+            "closed": "⚫ Закрыт",
+        }
+
+        status_text = status_names.get(
+            support_status,
+            "📌 Неизвестный статус",
         )
 
         if unread:
@@ -669,10 +622,29 @@ async def dialogs_menu(
                 "🟢 Нет новых сообщений"
             )
 
+        assigned_admin = (
+            dialog["assigned_admin_id"]
+        )
+
+        if assigned_admin:
+
+            assigned_text = (
+                f"👨‍💼 В работе у: "
+                f"<code>{assigned_admin}</code>"
+            )
+
+        else:
+
+            assigned_text = (
+                "👨‍💼 Никому не назначен"
+            )
+
         text = (
             f"💬 <b>Диалог #{dialog['id']}</b>\n\n"
             f"👤 User ID: "
             f"<code>{dialog['user_id']}</code>\n\n"
+            f"{status_text}\n"
+            f"{assigned_text}\n"
             f"{unread_text}\n\n"
             f"Последнее сообщение:\n"
             f"{escape(last_message)}"
@@ -710,9 +682,7 @@ async def moderation(
     message: Message,
 ):
 
-    if not is_admin(
-        message.from_user.id
-    ):
+    if not is_admin(message.from_user.id):
         return
 
     stories = get_waiting_stories()
@@ -758,9 +728,7 @@ async def statistics(
     message: Message,
 ):
 
-    if not is_admin(
-        message.from_user.id
-    ):
+    if not is_admin(message.from_user.id):
         return
 
     stats = get_stats()
@@ -791,9 +759,7 @@ async def all_stories(
     message: Message,
 ):
 
-    if not is_admin(
-        message.from_user.id
-    ):
+    if not is_admin(message.from_user.id):
         return
 
     stories = get_all_stories()
@@ -853,9 +819,7 @@ async def back(
 
     await state.clear()
 
-    if is_admin(
-        message.from_user.id
-    ):
+    if is_admin(message.from_user.id):
 
         await message.answer(
             "↩️ Админ-панель",
