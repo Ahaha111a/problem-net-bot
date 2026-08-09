@@ -14,4 +14,4 @@ ADMIN_IDS = [
     if user_id.strip()
 ]
 
-CHANNEL_ID = int(os.getenv("CHANNEL_ID"))
+CHANNEL_ID = os.getenv("CHANNEL_ID")
