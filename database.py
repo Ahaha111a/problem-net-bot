@@ -41,9 +41,29 @@ def init_db():
             assigned_admin_id INTEGER,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            last_message TEXT
+            last_message TEXT,
+            unread_admin INTEGER NOT NULL DEFAULT 0,
+            unread_user INTEGER NOT NULL DEFAULT 0
         )
     """)
+
+    # Миграция существующей базы данных.
+    # Если база была создана раньше, добавляем новые колонки.
+    try:
+        cursor.execute(
+            "ALTER TABLE support_dialogs "
+            "ADD COLUMN unread_admin INTEGER NOT NULL DEFAULT 0"
+        )
+    except sqlite3.OperationalError:
+        pass
+
+    try:
+        cursor.execute(
+            "ALTER TABLE support_dialogs "
+            "ADD COLUMN unread_user INTEGER NOT NULL DEFAULT 0"
+        )
+    except sqlite3.OperationalError:
+        pass
 
     # Сообщения диалогов
     cursor.execute("""
@@ -298,9 +318,11 @@ def create_support_dialog(user_id: int, first_message: str):
         INSERT INTO support_dialogs (
             user_id,
             status,
-            last_message
+            last_message,
+            unread_admin,
+            unread_user
         )
-        VALUES (?, 'open', ?)
+        VALUES (?, 'open', ?, 1, 0)
         """,
         (user_id, first_message)
     )
@@ -357,18 +379,37 @@ def add_support_message(
         )
     )
 
-    cursor.execute(
-        """
-        UPDATE support_dialogs
-        SET last_message = ?,
-            updated_at = CURRENT_TIMESTAMP
-        WHERE id = ?
-        """,
-        (
-            text,
-            dialog_id,
+    if sender_type == "user":
+
+        cursor.execute(
+            """
+            UPDATE support_dialogs
+            SET last_message = ?,
+                updated_at = CURRENT_TIMESTAMP,
+                unread_admin = unread_admin + 1
+            WHERE id = ?
+            """,
+            (
+                text,
+                dialog_id,
+            )
         )
-    )
+
+    else:
+
+        cursor.execute(
+            """
+            UPDATE support_dialogs
+            SET last_message = ?,
+                updated_at = CURRENT_TIMESTAMP,
+                unread_user = unread_user + 1
+            WHERE id = ?
+            """,
+            (
+                text,
+                dialog_id,
+            )
+        )
 
     connection.commit()
     connection.close()
@@ -468,6 +509,44 @@ def close_dialog(dialog_id: int):
         WHERE id = ?
         """,
         (dialog_id,)
+    )
+
+    connection.commit()
+    connection.close()
+
+
+# =========================================================
+# НЕПРОЧИТАННЫЕ СООБЩЕНИЯ
+# =========================================================
+
+def mark_dialog_read_by_admin(dialog_id: int):
+    connection = get_connection()
+    cursor = connection.cursor()
+
+    cursor.execute(
+        """
+        UPDATE support_dialogs
+        SET unread_admin = 0
+        WHERE id = ?
+        """,
+        (dialog_id,),
+    )
+
+    connection.commit()
+    connection.close()
+
+
+def mark_dialog_read_by_user(dialog_id: int):
+    connection = get_connection()
+    cursor = connection.cursor()
+
+    cursor.execute(
+        """
+        UPDATE support_dialogs
+        SET unread_user = 0
+        WHERE id = ?
+        """,
+        (dialog_id,),
     )
 
     connection.commit()
