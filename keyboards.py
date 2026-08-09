@@ -6,106 +6,62 @@ from aiogram.types import (
 )
 
 
-# =========================================================
-# ГЛАВНОЕ МЕНЮ ПОЛЬЗОВАТЕЛЯ
-# =========================================================
-
 main_keyboard = ReplyKeyboardMarkup(
     keyboard=[
         [
-            KeyboardButton(
-                text="📝 Поделиться историей"
-            )
+            KeyboardButton(text="📝 Поделиться историей")
         ],
         [
-            KeyboardButton(
-                text="💡 Совет дня"
-            ),
-            KeyboardButton(
-                text="📚 Полезные материалы"
-            ),
+            KeyboardButton(text="💡 Совет дня"),
+            KeyboardButton(text="📚 Полезные материалы"),
         ],
         [
-            KeyboardButton(
-                text="🆘 Экстренная поддержка"
-            )
+            KeyboardButton(text="🆘 Экстренная поддержка")
         ],
     ],
     resize_keyboard=True,
 )
 
-
-# =========================================================
-# ГЛАВНОЕ МЕНЮ АДМИНИСТРАТОРА В РЕЖИМЕ ПОЛЬЗОВАТЕЛЯ
-# =========================================================
 
 admin_user_keyboard = ReplyKeyboardMarkup(
     keyboard=[
         [
-            KeyboardButton(
-                text="📝 Поделиться историей"
-            )
+            KeyboardButton(text="📝 Поделиться историей")
         ],
         [
-            KeyboardButton(
-                text="💡 Совет дня"
-            ),
-            KeyboardButton(
-                text="📚 Полезные материалы"
-            ),
+            KeyboardButton(text="💡 Совет дня"),
+            KeyboardButton(text="📚 Полезные материалы"),
         ],
         [
-            KeyboardButton(
-                text="🆘 Экстренная поддержка"
-            )
+            KeyboardButton(text="🆘 Экстренная поддержка")
         ],
         [
-            KeyboardButton(
-                text="👨‍💼 Админ-панель"
-            )
+            KeyboardButton(text="👨‍💼 Админ-панель")
         ],
     ],
     resize_keyboard=True,
 )
 
-
-# =========================================================
-# АДМИН-ПАНЕЛЬ
-# =========================================================
 
 admin_keyboard = ReplyKeyboardMarkup(
     keyboard=[
         [
-            KeyboardButton(
-                text="⏳ Модерация"
-            ),
-            KeyboardButton(
-                text="📊 Статистика"
-            ),
+            KeyboardButton(text="⏳ Модерация"),
+            KeyboardButton(text="📊 Статистика"),
         ],
         [
-            KeyboardButton(
-                text="💬 Диалоги"
-            )
+            KeyboardButton(text="💬 Диалоги")
         ],
         [
-            KeyboardButton(
-                text="📁 Все истории"
-            )
+            KeyboardButton(text="📁 Все истории")
         ],
         [
-            KeyboardButton(
-                text="👤 Режим пользователя"
-            )
+            KeyboardButton(text="👤 Режим пользователя")
         ],
     ],
     resize_keyboard=True,
 )
 
-
-# =========================================================
-# ВЫБОР СПОСОБА ЭКСТРЕННОЙ ПОДДЕРЖКИ
-# =========================================================
 
 def support_method_keyboard():
     return InlineKeyboardMarkup(
@@ -126,10 +82,6 @@ def support_method_keyboard():
     )
 
 
-# =========================================================
-# ЛИЧНЫЙ КОНТАКТ ПОЛЬЗОВАТЕЛЯ
-# =========================================================
-
 def personal_contact_keyboard():
     return InlineKeyboardMarkup(
         inline_keyboard=[
@@ -142,10 +94,6 @@ def personal_contact_keyboard():
         ]
     )
 
-
-# =========================================================
-# МАТЕРИАЛЫ
-# =========================================================
 
 def material_actions_keyboard():
     return InlineKeyboardMarkup(
@@ -160,14 +108,7 @@ def material_actions_keyboard():
     )
 
 
-# =========================================================
-# МОДЕРАЦИЯ
-# =========================================================
-
-def moderation_keyboard(
-    story_id: int,
-    user_id: int,
-):
+def moderation_keyboard(story_id: int, user_id: int):
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
@@ -196,13 +137,7 @@ def moderation_keyboard(
     )
 
 
-# =========================================================
-# НОВОЕ СООБЩЕНИЕ В ДИАЛОГЕ
-# =========================================================
-
-def support_new_message_keyboard(
-    dialog_id: int,
-):
+def support_new_message_keyboard(dialog_id: int):
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
@@ -221,13 +156,7 @@ def support_new_message_keyboard(
     )
 
 
-# =========================================================
-# УПРАВЛЕНИЕ ДИАЛОГОМ
-# =========================================================
-
-def support_dialog_keyboard(
-    dialog_id: int,
-):
+def support_dialog_keyboard(dialog_id: int):
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
@@ -258,14 +187,7 @@ def support_dialog_keyboard(
     )
 
 
-# =========================================================
-# ЛИЧНЫЙ КОНТАКТ ДЛЯ МОДЕРАТОРА
-# =========================================================
-
-def personal_request_keyboard(
-    dialog_id: int,
-    user_id: int,
-):
+def personal_request_keyboard(dialog_id: int, user_id: int):
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
