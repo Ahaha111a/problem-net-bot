@@ -17,8 +17,11 @@ from database import (
     get_open_dialog_by_user,
     add_support_message,
     assign_dialog,
+    unassign_dialog,
     close_dialog,
     mark_dialog_read_by_admin,
+    set_dialog_status,
+    request_personal_contact,
     create_support_dialog,
 )
 
@@ -62,6 +65,58 @@ async def check_admin(
 
 
 # =========================================================
+# ОТПРАВКА ЗАПРОСА АДМИНИСТРАТОРАМ
+# =========================================================
+
+async def send_personal_request_to_admins(
+    bot,
+    dialog_id: int,
+    user_id: int,
+):
+
+    is_new_request = request_personal_contact(
+        dialog_id
+    )
+
+    if not is_new_request:
+
+        return False
+
+    admin_text = (
+        "📞 <b>ЗАПРОС НА ЛИЧНЫЙ КОНТАКТ</b>\n\n"
+        f"💬 Диалог #{dialog_id}\n"
+        f"👤 User ID: "
+        f"<code>{user_id}</code>\n\n"
+        "Пользователь хочет, чтобы "
+        "сотрудник поддержки связался "
+        "с ним лично."
+    )
+
+    for admin_id in ADMIN_IDS:
+
+        try:
+
+            await bot.send_message(
+                admin_id,
+                admin_text,
+                reply_markup=personal_request_keyboard(
+                    dialog_id,
+                    user_id,
+                ),
+                parse_mode="HTML",
+            )
+
+        except Exception as error:
+
+            print(
+                f"PERSONAL REQUEST ADMIN ERROR: "
+                f"{error}"
+            )
+
+    return True
+
+
+# =========================================================
 # ВЫБОР: ПРОДОЛЖИТЬ В БОТЕ
 # =========================================================
 
@@ -91,7 +146,7 @@ async def support_method_bot(
     await callback.message.answer(
         "💬 <b>Продолжаем здесь</b>\n\n"
         "Напишите, что сейчас происходит.\n\n"
-        "Сообщение увидит модератор.\n\n"
+        "Сообщение увидит сотрудник поддержки.\n\n"
         "📞 В любой момент вы сможете "
         "попросить сотрудника связаться "
         "с вами лично.",
@@ -126,19 +181,41 @@ async def support_method_personal(
         dialog_id = create_support_dialog(
             user_id=user_id,
             first_message=(
-                "📞 Пользователь запросил "
-                "личный контакт с сотрудником "
-                "поддержки."
+                "Пользователь запросил "
+                "личный контакт с сотрудником поддержки."
             ),
         )
 
     await send_personal_request_to_admins(
-        callback,
-        dialog_id,
-        user_id,
+        bot=callback.bot,
+        dialog_id=dialog_id,
+        user_id=user_id,
     )
 
     await state.clear()
+
+    await callback.answer(
+        "📞 Запрос передан сотруднику."
+    )
+
+    try:
+
+        await callback.message.edit_reply_markup(
+            reply_markup=None
+        )
+
+    except Exception:
+        pass
+
+    await callback.message.answer(
+        "📞 <b>Запрос отправлен</b>\n\n"
+        "Мы передали сотруднику поддержки "
+        "запрос на личный контакт.\n\n"
+        "Сотрудник сможет открыть ваш "
+        "Telegram-профиль и написать вам напрямую.\n\n"
+        "💬 Диалог в боте при этом остаётся открытым.",
+        parse_mode="HTML",
+    )
 
 
 # =========================================================
@@ -158,93 +235,37 @@ async def support_personal_request(
         user_id
     )
 
-    if dialog:
-
-        dialog_id = dialog["id"]
-
-    else:
+    if not dialog:
 
         dialog_id = create_support_dialog(
             user_id=user_id,
             first_message=(
-                "📞 Пользователь запросил "
-                "личный контакт с сотрудником "
-                "поддержки."
+                "Пользователь запросил "
+                "личный контакт с сотрудником поддержки."
             ),
         )
 
-    await send_personal_request_to_admins(
-        callback,
-        dialog_id,
-        user_id,
+    else:
+
+        dialog_id = dialog["id"]
+
+    is_new_request = await send_personal_request_to_admins(
+        bot=callback.bot,
+        dialog_id=dialog_id,
+        user_id=user_id,
     )
 
+    if is_new_request:
 
-# =========================================================
-# ОТПРАВКА ЗАПРОСА СОТРУДНИКАМ
-# =========================================================
-
-async def send_personal_request_to_admins(
-    callback: CallbackQuery,
-    dialog_id: int,
-    user_id: int,
-):
-
-    admin_text = (
-        "📞 <b>ЗАПРОС НА ЛИЧНЫЙ КОНТАКТ</b>\n\n"
-        f"💬 Диалог #{dialog_id}\n"
-        f"👤 User ID: "
-        f"<code>{user_id}</code>\n\n"
-        "Пользователь хочет, чтобы "
-        "сотрудник поддержки связался "
-        "с ним лично."
-    )
-
-    for admin_id in ADMIN_IDS:
-
-        try:
-
-            await callback.bot.send_message(
-                admin_id,
-                admin_text,
-                reply_markup=personal_request_keyboard(
-                    dialog_id,
-                    user_id,
-                ),
-                parse_mode="HTML",
-            )
-
-        except Exception as error:
-
-            print(
-                f"PERSONAL REQUEST ADMIN ERROR: "
-                f"{error}"
-            )
-
-    await callback.answer(
-        "📞 Запрос передан сотруднику."
-    )
-
-    try:
-
-        await callback.message.edit_reply_markup(
-            reply_markup=None
+        await callback.answer(
+            "📞 Запрос передан сотруднику."
         )
 
-    except Exception:
-        pass
+    else:
 
-    await callback.message.answer(
-        "📞 <b>Запрос отправлен</b>\n\n"
-        "Мы передали сотруднику поддержки "
-        "ваш запрос.\n\n"
-        "Сотрудник сможет открыть ваш "
-        "Telegram-профиль и написать вам "
-        "напрямую.\n\n"
-        "💬 Диалог в боте при этом "
-        "остаётся открытым.",
-        parse_mode="HTML",
-    )
+        await callback.answer(
+            "📞 Запрос уже находится у сотрудника."
+        )
 
 
 # =========================================================
@@ -258,9 +279,7 @@ async def publish_handler(
     callback: CallbackQuery,
 ):
 
-    if not await check_admin(
-        callback
-    ):
+    if not await check_admin(callback):
         return
 
     try:
@@ -281,9 +300,7 @@ async def publish_handler(
 
         return
 
-    story = get_story(
-        story_id
-    )
+    story = get_story(story_id)
 
     if story is None:
 
@@ -312,9 +329,7 @@ async def publish_handler(
             text=post_text,
         )
 
-        publish_story(
-            story_id
-        )
+        publish_story(story_id)
 
         try:
 
@@ -364,9 +379,7 @@ async def reject_handler(
     callback: CallbackQuery,
 ):
 
-    if not await check_admin(
-        callback
-    ):
+    if not await check_admin(callback):
         return
 
     try:
@@ -387,9 +400,7 @@ async def reject_handler(
 
         return
 
-    story = get_story(
-        story_id
-    )
+    story = get_story(story_id)
 
     if story is None:
 
@@ -402,9 +413,7 @@ async def reject_handler(
 
     try:
 
-        reject_story(
-            story_id
-        )
+        reject_story(story_id)
 
         try:
 
@@ -457,9 +466,7 @@ async def edit_handler(
     state: FSMContext,
 ):
 
-    if not await check_admin(
-        callback
-    ):
+    if not await check_admin(callback):
         return
 
     try:
@@ -480,9 +487,7 @@ async def edit_handler(
 
         return
 
-    story = get_story(
-        story_id
-    )
+    story = get_story(story_id)
 
     if story is None:
 
@@ -517,9 +522,7 @@ async def save_edited_post(
     state: FSMContext,
 ):
 
-    if not is_admin(
-        message.from_user.id
-    ):
+    if not is_admin(message.from_user.id):
 
         await state.clear()
 
@@ -590,9 +593,7 @@ async def contact_user_handler(
     state: FSMContext,
 ):
 
-    if not await check_admin(
-        callback
-    ):
+    if not await check_admin(callback):
         return
 
     try:
@@ -613,9 +614,7 @@ async def contact_user_handler(
 
         return
 
-    story = get_story(
-        story_id
-    )
+    story = get_story(story_id)
 
     if story is None:
 
@@ -656,9 +655,7 @@ async def send_contact_message(
     state: FSMContext,
 ):
 
-    if not is_admin(
-        message.from_user.id
-    ):
+    if not is_admin(message.from_user.id):
 
         await state.clear()
 
@@ -702,8 +699,9 @@ async def send_contact_message(
             chat_id=user_id,
             text=(
                 "💬 Сообщение от команды:\n\n"
-                f"{message.text}"
+                f"{escape(message.text)}"
             ),
+            parse_mode="HTML",
         )
 
         await state.clear()
@@ -727,6 +725,131 @@ async def send_contact_message(
 
 
 # =========================================================
+# СТАРЫЙ ОТВЕТ НА ПОДДЕРЖКУ
+# =========================================================
+
+@callback_router.callback_query(
+    F.data.startswith("support_reply:")
+)
+async def support_reply_handler(
+    callback: CallbackQuery,
+    state: FSMContext,
+):
+
+    if not await check_admin(callback):
+        return
+
+    try:
+
+        user_id = int(
+            callback.data.split(":")[1]
+        )
+
+    except (
+        ValueError,
+        IndexError,
+    ):
+
+        await callback.answer(
+            "❌ Некорректный ID пользователя.",
+            show_alert=True,
+        )
+
+        return
+
+    await state.update_data(
+        support_user_id=user_id
+    )
+
+    await state.set_state(
+        StoryState.waiting_for_support_reply
+    )
+
+    await callback.answer()
+
+    await callback.message.answer(
+        f"💬 <b>Ответ пользователю</b>\n\n"
+        f"👤 User ID: "
+        f"<code>{user_id}</code>\n\n"
+        "Напишите сообщение.",
+        parse_mode="HTML",
+    )
+
+
+@callback_router.message(
+    StoryState.waiting_for_support_reply
+)
+async def send_support_reply(
+    message: Message,
+    state: FSMContext,
+):
+
+    if not is_admin(message.from_user.id):
+
+        await state.clear()
+
+        await message.answer(
+            "⛔ У вас нет доступа."
+        )
+
+        return
+
+    if not message.text:
+
+        await message.answer(
+            "❗ Отправьте текстовое сообщение."
+        )
+
+        return
+
+    data = await state.get_data()
+
+    user_id = data.get(
+        "support_user_id"
+    )
+
+    if not user_id:
+
+        await state.clear()
+
+        await message.answer(
+            "❌ Пользователь не определён."
+        )
+
+        return
+
+    try:
+
+        await message.bot.send_message(
+            chat_id=user_id,
+            text=(
+                "💙 Сообщение от модератора:\n\n"
+                f"{escape(message.text)}"
+            ),
+            parse_mode="HTML",
+        )
+
+        await state.clear()
+
+        await message.answer(
+            "✅ Ответ отправлен пользователю."
+        )
+
+    except Exception as error:
+
+        print(
+            f"SUPPORT REPLY ERROR: "
+            f"{error}"
+        )
+
+        await state.clear()
+
+        await message.answer(
+            "❌ Не удалось отправить ответ."
+        )
+
+
+# =========================================================
 # ОТКРЫТЬ ДИАЛОГ
 # =========================================================
 
@@ -738,9 +861,7 @@ async def dialog_open_handler(
     state: FSMContext,
 ):
 
-    if not await check_admin(
-        callback
-    ):
+    if not await check_admin(callback):
         return
 
     try:
@@ -761,9 +882,7 @@ async def dialog_open_handler(
 
         return
 
-    dialog = get_dialog(
-        dialog_id
-    )
+    dialog = get_dialog(dialog_id)
 
     if dialog is None:
 
@@ -783,13 +902,34 @@ async def dialog_open_handler(
 
         return
 
+    assigned_admin_id = (
+        dialog["assigned_admin_id"]
+    )
+
+    current_admin_id = (
+        callback.from_user.id
+    )
+
+    if (
+        assigned_admin_id
+        and assigned_admin_id != current_admin_id
+    ):
+
+        await callback.answer(
+            "👨‍💼 Этот диалог уже взят "
+            "другим сотрудником.",
+            show_alert=True,
+        )
+
+        return
+
     mark_dialog_read_by_admin(
         dialog_id
     )
 
     assign_dialog(
         dialog_id,
-        callback.from_user.id,
+        current_admin_id,
     )
 
     await state.update_data(
@@ -804,10 +944,29 @@ async def dialog_open_handler(
         dialog_id
     )
 
+    support_status = (
+        dialog["support_status"] or "new"
+    )
+
+    status_names = {
+        "new": "🔴 Новый",
+        "in_progress": "🟡 В работе",
+        "waiting_user": "🟠 Ожидает пользователя",
+        "closed": "⚫ Закрыт",
+    }
+
+    status_text = status_names.get(
+        support_status,
+        "📌 Неизвестный статус",
+    )
+
     text = (
         f"💬 <b>Диалог #{dialog_id}</b>\n\n"
         f"👤 User ID: "
-        f"<code>{dialog['user_id']}</code>\n\n"
+        f"<code>{dialog['user_id']}</code>\n"
+        f"📌 Статус: {status_text}\n"
+        f"👨‍💼 Сотрудник: "
+        f"<code>{current_admin_id}</code>\n\n"
         "━━━━━━━━━━━━━━\n\n"
     )
 
@@ -819,7 +978,7 @@ async def dialog_open_handler(
 
         else:
 
-            prefix = "👨‍💼 Модератор"
+            prefix = "👨‍💼 Сотрудник"
 
         text += (
             f"<b>{prefix}</b>\n"
@@ -838,52 +997,17 @@ async def dialog_open_handler(
 
 
 # =========================================================
-# ВЫЙТИ ИЗ ДИАЛОГА
+# ОЖИДАЕТ ПОЛЬЗОВАТЕЛЯ
 # =========================================================
 
 @callback_router.callback_query(
-    F.data.startswith("dialog_exit:")
+    F.data.startswith("dialog_waiting:")
 )
-async def dialog_exit_handler(
-    callback: CallbackQuery,
-    state: FSMContext,
-):
-
-    if not await check_admin(
-        callback
-    ):
-        return
-
-    await state.clear()
-
-    await callback.answer(
-        "↩️ Вы вышли из диалога."
-    )
-
-    await callback.message.answer(
-        "💬 Вы вышли из текущего диалога.\n\n"
-        "Сам диалог остаётся открытым.\n"
-        "Новые сообщения пользователя продолжат "
-        "поступать в систему.\n\n"
-        "Открыть его снова можно через "
-        "«💬 Диалоги»."
-    )
-
-
-# =========================================================
-# ЛИЧНЫЙ КОНТАКТ МОДЕРАТОРА
-# =========================================================
-
-@callback_router.callback_query(
-    F.data.startswith("dialog_personal:")
-)
-async def dialog_personal_handler(
+async def dialog_waiting_handler(
     callback: CallbackQuery,
 ):
 
-    if not await check_admin(
-        callback
-    ):
+    if not await check_admin(callback):
         return
 
     try:
@@ -904,9 +1028,152 @@ async def dialog_personal_handler(
 
         return
 
-    dialog = get_dialog(
+    dialog = get_dialog(dialog_id)
+
+    if dialog is None:
+
+        await callback.answer(
+            "❌ Диалог не найден.",
+            show_alert=True,
+        )
+
+        return
+
+    if (
+        dialog["assigned_admin_id"]
+        and dialog["assigned_admin_id"]
+        != callback.from_user.id
+    ):
+
+        await callback.answer(
+            "⛔ Диалог ведёт другой сотрудник.",
+            show_alert=True,
+        )
+
+        return
+
+    set_dialog_status(
+        dialog_id,
+        "waiting_user",
+    )
+
+    await callback.answer(
+        "🟠 Диалог отмечен как ожидающий пользователя."
+    )
+
+    await callback.message.answer(
+        f"🟠 Диалог #{dialog_id} отмечен как "
+        "«ожидает пользователя»."
+    )
+
+
+# =========================================================
+# ВЫЙТИ ИЗ ДИАЛОГА
+# =========================================================
+
+@callback_router.callback_query(
+    F.data.startswith("dialog_exit:")
+)
+async def dialog_exit_handler(
+    callback: CallbackQuery,
+    state: FSMContext,
+):
+
+    if not await check_admin(callback):
+        return
+
+    try:
+
+        dialog_id = int(
+            callback.data.split(":")[1]
+        )
+
+    except (
+        ValueError,
+        IndexError,
+    ):
+
+        await callback.answer(
+            "❌ Некорректный ID диалога.",
+            show_alert=True,
+        )
+
+        return
+
+    dialog = get_dialog(dialog_id)
+
+    if dialog is None:
+
+        await callback.answer(
+            "❌ Диалог не найден.",
+            show_alert=True,
+        )
+
+        return
+
+    if (
+        dialog["assigned_admin_id"]
+        and dialog["assigned_admin_id"]
+        != callback.from_user.id
+    ):
+
+        await callback.answer(
+            "⛔ Вы не ведёте этот диалог.",
+            show_alert=True,
+        )
+
+        return
+
+    unassign_dialog(
         dialog_id
     )
+
+    await state.clear()
+
+    await callback.answer(
+        "↩️ Вы вышли из диалога."
+    )
+
+    await callback.message.answer(
+        "💬 Вы вышли из текущего диалога.\n\n"
+        "Сам диалог остаётся открытым.\n"
+        "Другой сотрудник сможет взять его в работу."
+    )
+
+
+# =========================================================
+# ЛИЧНЫЙ КОНТАКТ МОДЕРАТОРА
+# =========================================================
+
+@callback_router.callback_query(
+    F.data.startswith("dialog_personal:")
+)
+async def dialog_personal_handler(
+    callback: CallbackQuery,
+):
+
+    if not await check_admin(callback):
+        return
+
+    try:
+
+        dialog_id = int(
+            callback.data.split(":")[1]
+        )
+
+    except (
+        ValueError,
+        IndexError,
+    ):
+
+        await callback.answer(
+            "❌ Некорректный ID диалога.",
+            show_alert=True,
+        )
+
+        return
+
+    dialog = get_dialog(dialog_id)
 
     if dialog is None:
 
@@ -942,8 +1209,8 @@ async def dialog_personal_handler(
         await callback.bot.send_message(
             chat_id=user_id,
             text=(
-                "📞 <b>Сотрудник поддержки "
-                "получил ваш запрос.</b>\n\n"
+                "📞 <b>Сотрудник поддержки получил "
+                "ваш запрос.</b>\n\n"
                 "Он может связаться с вами "
                 "напрямую в Telegram.\n\n"
                 "💬 Диалог в боте остаётся открытым."
@@ -971,9 +1238,7 @@ async def dialog_close_handler(
     state: FSMContext,
 ):
 
-    if not await check_admin(
-        callback
-    ):
+    if not await check_admin(callback):
         return
 
     try:
@@ -994,14 +1259,25 @@ async def dialog_close_handler(
 
         return
 
-    dialog = get_dialog(
-        dialog_id
-    )
+    dialog = get_dialog(dialog_id)
 
     if dialog is None:
 
         await callback.answer(
             "❌ Диалог не найден.",
+            show_alert=True,
+        )
+
+        return
+
+    if (
+        dialog["assigned_admin_id"]
+        and dialog["assigned_admin_id"]
+        != callback.from_user.id
+    ):
+
+        await callback.answer(
+            "⛔ Диалог ведёт другой сотрудник.",
             show_alert=True,
         )
 
@@ -1021,7 +1297,8 @@ async def dialog_close_handler(
                 "💙 Диалог с поддержкой завершён.\n\n"
                 "Если вам снова понадобится помощь, "
                 "вы можете нажать "
-                "«🆘 Экстренная поддержка»."
+                "«🆘 Экстренная поддержка» "
+                "или «📞 Связь с сотрудником»."
             ),
         )
 
@@ -1057,9 +1334,7 @@ async def moderator_dialog_message(
     state: FSMContext,
 ):
 
-    if not is_admin(
-        message.from_user.id
-    ):
+    if not is_admin(message.from_user.id):
 
         await state.clear()
 
@@ -1093,9 +1368,7 @@ async def moderator_dialog_message(
 
         return
 
-    dialog = get_dialog(
-        dialog_id
-    )
+    dialog = get_dialog(dialog_id)
 
     if (
         dialog is None
@@ -1106,6 +1379,20 @@ async def moderator_dialog_message(
 
         await message.answer(
             "❌ Диалог уже закрыт."
+        )
+
+        return
+
+    if (
+        dialog["assigned_admin_id"]
+        and dialog["assigned_admin_id"]
+        != message.from_user.id
+    ):
+
+        await state.clear()
+
+        await message.answer(
+            "⛔ Этот диалог уже ведёт другой сотрудник."
         )
 
         return
@@ -1124,7 +1411,7 @@ async def moderator_dialog_message(
         await message.bot.send_message(
             chat_id=user_id,
             text=(
-                "💙 <b>Сообщение от модератора:</b>\n\n"
+                "💙 <b>Сообщение от сотрудника поддержки:</b>\n\n"
                 f"{escape(message.text)}"
             ),
             parse_mode="HTML",
