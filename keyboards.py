@@ -70,7 +70,7 @@ admin_keyboard = ReplyKeyboardMarkup(
 
 
 # =========================================================
-# МОДЕРАЦИЯ
+# КНОПКИ МОДЕРАЦИИ
 # =========================================================
 
 def moderation_keyboard(
@@ -107,7 +107,7 @@ def moderation_keyboard(
 
 
 # =========================================================
-# КНОПКА НОВОГО ДИАЛОГА
+# НОВОЕ СООБЩЕНИЕ В ДИАЛОГЕ
 # =========================================================
 
 def support_new_message_keyboard(
@@ -127,7 +127,7 @@ def support_new_message_keyboard(
 
 
 # =========================================================
-# КНОПКИ ВНУТРИ ДИАЛОГА
+# ОТКРЫТЫЙ ДИАЛОГ
 # =========================================================
 
 def support_dialog_keyboard(
@@ -138,13 +138,13 @@ def support_dialog_keyboard(
         inline_keyboard=[
             [
                 InlineKeyboardButton(
-                    text="⬅️ К диалогам",
+                    text="↩️ Выйти из диалога",
                     callback_data=f"dialog_exit:{dialog_id}",
                 )
             ],
             [
                 InlineKeyboardButton(
-                    text="🔴 Закрыть диалог",
+                    text="🔴 Завершить диалог",
                     callback_data=f"dialog_close:{dialog_id}",
                 )
             ],
@@ -153,7 +153,7 @@ def support_dialog_keyboard(
 
 
 # =========================================================
-# СПИСОК ДИАЛОГОВ
+# КНОПКА ДИАЛОГА В СПИСКЕ
 # =========================================================
 
 def dialog_list_keyboard(
