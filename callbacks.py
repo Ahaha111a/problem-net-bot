@@ -1,8 +1,8 @@
 from html import escape
 
 from aiogram import Router, F
-from aiogram.types import CallbackQuery, Message
 from aiogram.fsm.context import FSMContext
+from aiogram.types import CallbackQuery, Message
 
 from config import ADMIN_IDS, CHANNEL_ID
 
@@ -34,7 +34,7 @@ from keyboards import (
 )
 
 
-callback_router = Router()
+callback_router = Router(name="callbacks")
 
 
 # =========================================================
@@ -62,9 +62,13 @@ def get_id_from_callback(
     callback: CallbackQuery,
 ):
     try:
+        if not callback.data:
+            return None
+
         return int(
             callback.data.split(":", 1)[1]
         )
+
     except (
         ValueError,
         IndexError,
@@ -243,7 +247,7 @@ async def send_personal_request_to_admins(
 
         except Exception as error:
             print(
-                f"PERSONAL REQUEST ERROR: {error}"
+                f"PERSONAL REQUEST ERROR [{admin_id}]: {error}"
             )
 
     return sent_to_any_admin
@@ -782,7 +786,8 @@ async def dialog_open_handler(
     }
 
     support_status = (
-        dialog["support_status"] or "new"
+        dialog["support_status"]
+        or "new"
     )
 
     text = (
@@ -796,6 +801,7 @@ async def dialog_open_handler(
 
     if not messages:
         text += "Сообщений пока нет.\n"
+
     else:
         for item in messages:
             prefix = (
@@ -821,7 +827,7 @@ async def dialog_open_handler(
 
 
 # =========================================================
-# SUPPORT — CANCEL / BACK FROM DIALOG
+# SUPPORT — BACK
 # =========================================================
 
 @callback_router.message(
@@ -837,6 +843,7 @@ async def moderator_back(
         return
 
     data = await state.get_data()
+
     dialog_id = data.get(
         "moderator_dialog_id"
     )
