@@ -2,13 +2,13 @@ from html import escape
 import random
 
 from aiogram import Router, F
-from aiogram.filters import Command, StateFilter
-from aiogram.fsm.context import FSMContext
 from aiogram.types import (
     Message,
     InlineKeyboardMarkup,
     InlineKeyboardButton,
 )
+from aiogram.fsm.context import FSMContext
+from aiogram.filters import Command, StateFilter
 
 from states import StoryState
 from config import ADMIN_IDS
@@ -41,17 +41,7 @@ from keyboards import (
 )
 
 
-router = Router(name="handlers")
-@router.message()
-async def debug_all_messages(message: Message):
-    print(
-        "DEBUG MESSAGE:",
-        repr(message.text),
-        "USER:",
-        message.from_user.id if message.from_user else None,
-        "ADMIN:",
-        is_admin(message.from_user.id) if message.from_user else None,
-    )
+router = Router()
 
 
 # =========================================================
@@ -115,7 +105,7 @@ def materials_keyboard():
                     callback_data="material:self_esteem",
                 ),
             ],
-        ]
+        ],
     )
 
 
@@ -135,9 +125,9 @@ def daily_tip_keyboard():
                 InlineKeyboardButton(
                     text="🆘 Нужна поддержка",
                     callback_data="material:support",
-                )
-            ]
-        ]
+                ),
+            ],
+        ],
     )
 
 
@@ -223,6 +213,10 @@ async def switch_to_admin_mode(
     )
 
 
+# =========================================================
+# USER MODE
+# =========================================================
+
 @router.message(F.text == "👤 Режим пользователя")
 async def switch_to_user_mode(
     message: Message,
@@ -292,6 +286,10 @@ async def emergency_support(
         reply_markup=support_method_keyboard(),
     )
 
+
+# =========================================================
+# SUPPORT — USER MESSAGE
+# =========================================================
 
 @router.message(StoryState.waiting_for_support_message)
 async def receive_support_message(
@@ -374,9 +372,10 @@ async def notify_admins_about_message(
                 ),
                 parse_mode="HTML",
             )
+
         except Exception as error:
             print(
-                f"DIALOG ADMIN ERROR [{admin_id}]: {error}"
+                f"DIALOG ADMIN ERROR: {error}"
             )
 
 
@@ -432,8 +431,11 @@ async def receive_story(
 
     try:
         ai_result = await analyze_story(story)
+
     except Exception as error:
-        print(f"AI ERROR: {error}")
+        print(
+            f"AI ERROR: {error}"
+        )
 
         ai_result = (
             "⚠️ Автоматический анализ временно недоступен. "
@@ -448,8 +450,12 @@ async def receive_story(
 
     try:
         post_text = await create_post(story)
+
     except Exception as error:
-        print(f"POST ERROR: {error}")
+        print(
+            f"POST ERROR: {error}"
+        )
+
         post_text = ""
 
     update_post(
@@ -481,9 +487,10 @@ async def receive_story(
                 ),
                 parse_mode="HTML",
             )
+
         except Exception as error:
             print(
-                f"ADMIN SEND ERROR [{admin_id}]: {error}"
+                f"ADMIN SEND ERROR: {error}"
             )
 
     await state.clear()
@@ -502,20 +509,22 @@ async def receive_story(
 
 # =========================================================
 # ACTIVE USER SUPPORT
+#
+# ВАЖНО:
+# Этот handler теперь работает ТОЛЬКО для НЕ-АДМИНИСТРАТОРОВ.
+# Поэтому админские кнопки не перехватываются.
 # =========================================================
 
 @router.message(
     StateFilter(None),
     F.chat.type == "private",
     F.text,
+    ~F.from_user.id.in_(ADMIN_IDS),
 )
 async def active_support_message(
     message: Message,
     state: FSMContext,
 ):
-    if is_admin(message.from_user.id):
-        return
-
     menu_buttons = {
         "📝 Поделиться историей",
         "💡 Совет дня",
@@ -609,7 +618,7 @@ async def dialogs_menu(message: Message):
             f"👤 User ID: "
             f"<code>{dialog['user_id']}</code>\n\n"
             f"{'🔴 Новых сообщений: ' + str(unread) if unread else '🟢 Нет новых сообщений'}\n\n"
-            "Последнее сообщение:\n"
+            f"Последнее сообщение:\n"
             f"{escape(last_message)}"
         )
 
@@ -621,9 +630,9 @@ async def dialogs_menu(message: Message):
                         callback_data=(
                             f"dialog_open:{dialog['id']}"
                         ),
-                    )
-                ]
-            ]
+                    ),
+                ],
+            ],
         )
 
         await message.answer(
