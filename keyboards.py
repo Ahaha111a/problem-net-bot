@@ -6,6 +6,10 @@ from aiogram.types import (
 )
 
 
+# =========================================================
+# USER MENU
+# =========================================================
+
 main_keyboard = ReplyKeyboardMarkup(
     keyboard=[
         [
@@ -22,6 +26,10 @@ main_keyboard = ReplyKeyboardMarkup(
     resize_keyboard=True,
 )
 
+
+# =========================================================
+# ADMIN USER MODE
+# =========================================================
 
 admin_user_keyboard = ReplyKeyboardMarkup(
     keyboard=[
@@ -43,6 +51,10 @@ admin_user_keyboard = ReplyKeyboardMarkup(
 )
 
 
+# =========================================================
+# ADMIN PANEL
+# =========================================================
+
 admin_keyboard = ReplyKeyboardMarkup(
     keyboard=[
         [
@@ -50,21 +62,25 @@ admin_keyboard = ReplyKeyboardMarkup(
             KeyboardButton(text="📊 Статистика"),
         ],
         [
-            KeyboardButton(text="💬 Диалоги")
+            KeyboardButton(text="💬 Диалоги"),
         ],
         [
-            KeyboardButton(text="📁 Все истории")
+            KeyboardButton(text="📁 Все истории"),
         ],
         [
-            KeyboardButton(text="👤 Режим пользователя")
+            KeyboardButton(text="👤 Режим пользователя"),
         ],
         [
-            KeyboardButton(text="⬅️ Назад")
+            KeyboardButton(text="⬅️ Назад"),
         ],
     ],
     resize_keyboard=True,
 )
 
+
+# =========================================================
+# SUPPORT METHOD
+# =========================================================
 
 def support_method_keyboard():
     return InlineKeyboardMarkup(
@@ -98,6 +114,10 @@ def personal_contact_keyboard():
     )
 
 
+# =========================================================
+# MATERIALS
+# =========================================================
+
 def material_actions_keyboard():
     return InlineKeyboardMarkup(
         inline_keyboard=[
@@ -110,6 +130,10 @@ def material_actions_keyboard():
         ]
     )
 
+
+# =========================================================
+# STORIES MODERATION
+# =========================================================
 
 def moderation_keyboard(
     story_id: int,
@@ -143,6 +167,10 @@ def moderation_keyboard(
     )
 
 
+# =========================================================
+# SUPPORT — NEW DIALOG
+# =========================================================
+
 def support_new_message_keyboard(
     dialog_id: int,
 ):
@@ -163,6 +191,10 @@ def support_new_message_keyboard(
         ]
     )
 
+
+# =========================================================
+# SUPPORT — ACTIVE DIALOG
+# =========================================================
 
 def support_dialog_keyboard(
     dialog_id: int,
@@ -196,6 +228,10 @@ def support_dialog_keyboard(
         ]
     )
 
+
+# =========================================================
+# PERSONAL CONTACT REQUEST
+# =========================================================
 
 def personal_request_keyboard(
     dialog_id: int,
