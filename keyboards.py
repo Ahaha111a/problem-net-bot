@@ -13,14 +13,14 @@ from aiogram.types import (
 main_keyboard = ReplyKeyboardMarkup(
     keyboard=[
         [
-            KeyboardButton(text="📝 Поделиться историей")
+            KeyboardButton(text="📝 Поделиться историей"),
         ],
         [
             KeyboardButton(text="💡 Совет дня"),
             KeyboardButton(text="📚 Полезные материалы"),
         ],
         [
-            KeyboardButton(text="🆘 Экстренная поддержка")
+            KeyboardButton(text="🆘 Экстренная поддержка"),
         ],
     ],
     resize_keyboard=True,
@@ -28,23 +28,23 @@ main_keyboard = ReplyKeyboardMarkup(
 
 
 # =========================================================
-# ADMIN USER MODE
+# ADMIN — USER MODE
 # =========================================================
 
 admin_user_keyboard = ReplyKeyboardMarkup(
     keyboard=[
         [
-            KeyboardButton(text="📝 Поделиться историей")
+            KeyboardButton(text="📝 Поделиться историей"),
         ],
         [
             KeyboardButton(text="💡 Совет дня"),
             KeyboardButton(text="📚 Полезные материалы"),
         ],
         [
-            KeyboardButton(text="🆘 Экстренная поддержка")
+            KeyboardButton(text="🆘 Экстренная поддержка"),
         ],
         [
-            KeyboardButton(text="👨‍💼 Админ-панель")
+            KeyboardButton(text="👨‍💼 Админ-панель"),
         ],
     ],
     resize_keyboard=True,
@@ -89,17 +89,21 @@ def support_method_keyboard():
                 InlineKeyboardButton(
                     text="💬 Продолжить в боте",
                     callback_data="support_method:bot",
-                )
+                ),
             ],
             [
                 InlineKeyboardButton(
                     text="📞 Пусть со мной свяжется сотрудник",
                     callback_data="support_method:personal",
-                )
+                ),
             ],
-        ]
+        ],
     )
 
+
+# =========================================================
+# PERSONAL CONTACT — USER
+# =========================================================
 
 def personal_contact_keyboard():
     return InlineKeyboardMarkup(
@@ -108,9 +112,9 @@ def personal_contact_keyboard():
                 InlineKeyboardButton(
                     text="📞 Связаться со мной лично",
                     callback_data="support_personal_request",
-                )
-            ]
-        ]
+                ),
+            ],
+        ],
     )
 
 
@@ -125,14 +129,14 @@ def material_actions_keyboard():
                 InlineKeyboardButton(
                     text="🆘 Нужна поддержка",
                     callback_data="material:support",
-                )
-            ]
-        ]
+                ),
+            ],
+        ],
     )
 
 
 # =========================================================
-# STORIES MODERATION
+# STORIES — MODERATION
 # =========================================================
 
 def moderation_keyboard(
@@ -155,20 +159,20 @@ def moderation_keyboard(
                 InlineKeyboardButton(
                     text="❌ Отклонить",
                     callback_data=f"reject:{story_id}",
-                )
+                ),
             ],
             [
                 InlineKeyboardButton(
                     text="👤 Написать пользователю",
                     callback_data=f"contact:{story_id}",
-                )
+                ),
             ],
-        ]
+        ],
     )
 
 
 # =========================================================
-# SUPPORT — NEW DIALOG
+# SUPPORT — NEW MESSAGE
 # =========================================================
 
 def support_new_message_keyboard(
@@ -180,15 +184,15 @@ def support_new_message_keyboard(
                 InlineKeyboardButton(
                     text="💬 Открыть диалог",
                     callback_data=f"dialog_open:{dialog_id}",
-                )
+                ),
             ],
             [
                 InlineKeyboardButton(
                     text="📞 Связаться лично",
                     callback_data=f"dialog_personal:{dialog_id}",
-                )
+                ),
             ],
-        ]
+        ],
     )
 
 
@@ -205,32 +209,32 @@ def support_dialog_keyboard(
                 InlineKeyboardButton(
                     text="📞 Связаться лично",
                     callback_data=f"dialog_personal:{dialog_id}",
-                )
+                ),
             ],
             [
                 InlineKeyboardButton(
                     text="🟠 Ожидает пользователя",
                     callback_data=f"dialog_waiting:{dialog_id}",
-                )
+                ),
             ],
             [
                 InlineKeyboardButton(
                     text="⬅️ Выйти из диалога",
                     callback_data=f"dialog_exit:{dialog_id}",
-                )
+                ),
             ],
             [
                 InlineKeyboardButton(
                     text="🔴 Закрыть диалог",
                     callback_data=f"dialog_close:{dialog_id}",
-                )
+                ),
             ],
-        ]
+        ],
     )
 
 
 # =========================================================
-# PERSONAL CONTACT REQUEST
+# PERSONAL REQUEST — ADMIN
 # =========================================================
 
 def personal_request_keyboard(
@@ -243,13 +247,13 @@ def personal_request_keyboard(
                 InlineKeyboardButton(
                     text="👤 Открыть профиль пользователя",
                     url=f"tg://user?id={user_id}",
-                )
+                ),
             ],
             [
                 InlineKeyboardButton(
                     text="💬 Открыть диалог",
                     callback_data=f"dialog_open:{dialog_id}",
-                )
+                ),
             ],
-        ]
+        ],
     )
