@@ -2,13 +2,13 @@ from html import escape
 import random
 
 from aiogram import Router, F
+from aiogram.filters import Command, StateFilter
+from aiogram.fsm.context import FSMContext
 from aiogram.types import (
     Message,
     InlineKeyboardMarkup,
     InlineKeyboardButton,
 )
-from aiogram.fsm.context import FSMContext
-from aiogram.filters import Command, StateFilter
 
 from states import StoryState
 from config import ADMIN_IDS
@@ -41,7 +41,7 @@ from keyboards import (
 )
 
 
-router = Router()
+router = Router(name="handlers")
 
 
 # =========================================================
@@ -105,7 +105,7 @@ def materials_keyboard():
                     callback_data="material:self_esteem",
                 ),
             ],
-        ],
+        ]
     )
 
 
@@ -125,9 +125,9 @@ def daily_tip_keyboard():
                 InlineKeyboardButton(
                     text="🆘 Нужна поддержка",
                     callback_data="material:support",
-                ),
-            ],
-        ],
+                )
+            ]
+        ]
     )
 
 
@@ -320,6 +320,7 @@ async def receive_support_message(
             dialog_id,
             "in_progress",
         )
+
     else:
         dialog_id = create_support_dialog(
             user_id,
@@ -365,7 +366,7 @@ async def notify_admins_about_message(
             )
         except Exception as error:
             print(
-                f"DIALOG ADMIN ERROR: {error}"
+                f"DIALOG ADMIN ERROR [{admin_id}]: {error}"
             )
 
 
@@ -426,7 +427,8 @@ async def receive_story(
 
         ai_result = (
             "⚠️ Автоматический анализ временно недоступен. "
-            "История сохранена. Администратор сможет обработать её вручную."
+            "История сохранена. Администратор сможет "
+            "обработать её вручную."
         )
 
     update_ai_result(
@@ -471,7 +473,7 @@ async def receive_story(
             )
         except Exception as error:
             print(
-                f"ADMIN SEND ERROR: {error}"
+                f"ADMIN SEND ERROR [{admin_id}]: {error}"
             )
 
     await state.clear()
@@ -586,15 +588,18 @@ async def dialogs_menu(message: Message):
         last_message = dialog["last_message"] or ""
 
         if len(last_message) > 100:
-            last_message = last_message[:100] + "..."
+            last_message = (
+                last_message[:100] + "..."
+            )
 
         unread = dialog["unread_admin"] or 0
 
         text = (
             f"💬 <b>Диалог #{dialog['id']}</b>\n\n"
-            f"👤 User ID: <code>{dialog['user_id']}</code>\n\n"
+            f"👤 User ID: "
+            f"<code>{dialog['user_id']}</code>\n\n"
             f"{'🔴 Новых сообщений: ' + str(unread) if unread else '🟢 Нет новых сообщений'}\n\n"
-            f"Последнее сообщение:\n"
+            "Последнее сообщение:\n"
             f"{escape(last_message)}"
         )
 
@@ -603,10 +608,12 @@ async def dialogs_menu(message: Message):
                 [
                     InlineKeyboardButton(
                         text="💬 Открыть",
-                        callback_data=f"dialog_open:{dialog['id']}",
-                    ),
-                ],
-            ],
+                        callback_data=(
+                            f"dialog_open:{dialog['id']}"
+                        ),
+                    )
+                ]
+            ]
         )
 
         await message.answer(
@@ -642,7 +649,8 @@ async def moderation(message: Message):
     for story in stories[:20]:
         await message.answer(
             f"📥 <b>История #{story['id']}</b>\n\n"
-            f"👤 User ID: <code>{story['user_id']}</code>\n\n"
+            f"👤 User ID: "
+            f"<code>{story['user_id']}</code>\n\n"
             f"{escape(story['text'])}",
             parse_mode="HTML",
             reply_markup=moderation_keyboard(
