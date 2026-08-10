@@ -42,6 +42,16 @@ from keyboards import (
 
 
 router = Router(name="handlers")
+@router.message()
+async def debug_all_messages(message: Message):
+    print(
+        "DEBUG MESSAGE:",
+        repr(message.text),
+        "USER:",
+        message.from_user.id if message.from_user else None,
+        "ADMIN:",
+        is_admin(message.from_user.id) if message.from_user else None,
+    )
 
 
 # =========================================================
