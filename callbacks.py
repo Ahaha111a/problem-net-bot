@@ -301,31 +301,71 @@ async def publish_handler(
         return
 
     try:
+        # -------------------------------------------------
+        # ПУБЛИКАЦИЯ В КАНАЛ
+        # -------------------------------------------------
+
         await callback.bot.send_message(
             chat_id=CHANNEL_ID,
             text=post_text,
         )
 
+        # -------------------------------------------------
+        # ОБНОВЛЯЕМ СТАТУС В БАЗЕ
+        # -------------------------------------------------
+
         publish_story(story_id)
+
+        # -------------------------------------------------
+        # УВЕДОМЛЯЕМ АВТОРА
+        # -------------------------------------------------
 
         try:
             await callback.bot.send_message(
                 story["user_id"],
-                "🎉 Ваша история была опубликована!\n\n"
+                "🎉 <b>Ваша история опубликована!</b>\n\n"
                 "Спасибо, что поделились ей с нами 💙",
+                parse_mode="HTML",
             )
+
         except Exception as error:
             print(
                 f"USER PUBLISH NOTIFY ERROR: {error}"
             )
 
-        await safe_remove_keyboard(callback)
+        # -------------------------------------------------
+        # ОБНОВЛЯЕМ КАРТОЧКУ МОДЕРАЦИИ
+        # -------------------------------------------------
+
+        if callback.message:
+
+            try:
+                await callback.message.edit_text(
+                    "━━━━━━━━━━━━━━━━━━\n"
+                    f"✅ <b>ИСТОРИЯ #{story_id}</b>\n"
+                    "━━━━━━━━━━━━━━━━━━\n\n"
+                    "История успешно опубликована "
+                    "в канале.\n\n"
+                    "👤 Автор получил уведомление.\n\n"
+                    "━━━━━━━━━━━━━━━━━━",
+                    parse_mode="HTML",
+                )
+
+            except Exception as error:
+                print(
+                    f"EDIT PUBLISHED MESSAGE ERROR: {error}"
+                )
+
+                await safe_remove_keyboard(
+                    callback
+                )
 
         await callback.answer(
             "✅ История опубликована."
         )
 
     except Exception as error:
+
         print(
             f"PUBLISH ERROR: {error}"
         )
@@ -375,26 +415,62 @@ async def reject_handler(
         return
 
     try:
+        # -------------------------------------------------
+        # ОТКЛОНЯЕМ ИСТОРИЮ
+        # -------------------------------------------------
+
         reject_story(story_id)
+
+        # -------------------------------------------------
+        # УВЕДОМЛЯЕМ АВТОРА
+        # -------------------------------------------------
 
         try:
             await callback.bot.send_message(
                 story["user_id"],
-                "ℹ️ Спасибо, что поделились своей историей.\n\n"
-                "К сожалению, сейчас она не может быть опубликована.",
+                "ℹ️ <b>Спасибо, что поделились своей историей.</b>\n\n"
+                "К сожалению, сейчас она не может быть "
+                "опубликована.",
+                parse_mode="HTML",
             )
+
         except Exception as error:
             print(
                 f"REJECT NOTIFY ERROR: {error}"
             )
 
-        await safe_remove_keyboard(callback)
+        # -------------------------------------------------
+        # ОБНОВЛЯЕМ КАРТОЧКУ МОДЕРАЦИИ
+        # -------------------------------------------------
+
+        if callback.message:
+
+            try:
+                await callback.message.edit_text(
+                    "━━━━━━━━━━━━━━━━━━\n"
+                    f"❌ <b>ИСТОРИЯ #{story_id}</b>\n"
+                    "━━━━━━━━━━━━━━━━━━\n\n"
+                    "История отклонена.\n\n"
+                    "👤 Автор получил уведомление.\n\n"
+                    "━━━━━━━━━━━━━━━━━━",
+                    parse_mode="HTML",
+                )
+
+            except Exception as error:
+                print(
+                    f"EDIT REJECTED MESSAGE ERROR: {error}"
+                )
+
+                await safe_remove_keyboard(
+                    callback
+                )
 
         await callback.answer(
             "❌ История отклонена."
         )
 
     except Exception as error:
+
         print(
             f"REJECT ERROR: {error}"
         )
