@@ -655,28 +655,126 @@ async def moderation(message: Message):
 
     if not stories:
         await message.answer(
-            "🟢 На модерации сейчас ничего нет.",
+            "🟢 <b>Модерация</b>\n\n"
+            "Сейчас нет историй, ожидающих проверки.",
+            parse_mode="HTML",
             reply_markup=admin_keyboard,
         )
         return
 
     await message.answer(
-        f"⏳ <b>На модерации: {len(stories)}</b>",
+        "⏳ <b>Модерация</b>\n\n"
+        f"Историй ожидает проверки: <b>{len(stories)}</b>\n\n"
+        "Ниже отображены последние истории.",
         parse_mode="HTML",
     )
 
     for story in stories[:20]:
-        await message.answer(
-            f"📥 <b>История #{story['id']}</b>\n\n"
-            f"👤 User ID: "
-            f"<code>{story['user_id']}</code>\n\n"
-            f"{escape(story['text'])}",
-            parse_mode="HTML",
-            reply_markup=moderation_keyboard(
-                story["id"],
-                story["user_id"],
-            ),
+
+        story_id = story["id"]
+        user_id = story["user_id"]
+
+        original_text = story["text"] or ""
+        ai_result = story["ai_result"] or ""
+        post_text = story["post_text"] or ""
+
+        # -------------------------------------------------
+        # Ограничиваем слишком длинные поля
+        # -------------------------------------------------
+
+        if len(original_text) > 3500:
+            original_text = (
+                original_text[:3500]
+                + "\n\n… <i>текст сокращён</i>"
+            )
+
+        if len(ai_result) > 3000:
+            ai_result = (
+                ai_result[:3000]
+                + "\n\n… <i>анализ сокращён</i>"
+            )
+
+        if len(post_text) > 3500:
+            post_text = (
+                post_text[:3500]
+                + "\n\n… <i>пост сокращён</i>"
+            )
+
+        # -------------------------------------------------
+        # Если пост ещё не создан
+        # -------------------------------------------------
+
+        if not post_text.strip():
+            post_text = (
+                "⚠️ <i>Готовый пост отсутствует.</i>\n\n"
+                "Используйте кнопку «✏️ Изменить», "
+                "чтобы добавить текст вручную."
+            )
+
+        # -------------------------------------------------
+        # Если AI-анализ отсутствует
+        # -------------------------------------------------
+
+        if not ai_result.strip():
+            ai_result = (
+                "⚠️ <i>AI-анализ отсутствует.</i>"
+            )
+
+        # -------------------------------------------------
+        # Карточка истории
+        # -------------------------------------------------
+
+        moderation_text = (
+            "━━━━━━━━━━━━━━━━━━\n"
+            f"📥 <b>ИСТОРИЯ #{story_id}</b>\n"
+            "━━━━━━━━━━━━━━━━━━\n\n"
+
+            f"👤 <b>Автор:</b> "
+            f"<code>{user_id}</code>\n\n"
+
+            "💭 <b>ИСХОДНЫЙ ТЕКСТ</b>\n\n"
+            f"{escape(original_text)}\n\n"
+
+            "━━━━━━━━━━━━━━━━━━\n\n"
+
+            "🤖 <b>АНАЛИЗ AI</b>\n\n"
+            f"{escape(ai_result)}\n\n"
+
+            "━━━━━━━━━━━━━━━━━━\n\n"
+
+            "📌 <b>ГОТОВЫЙ ПОСТ</b>\n\n"
+            f"{escape(post_text)}\n\n"
+
+            "━━━━━━━━━━━━━━━━━━"
         )
+
+        try:
+            await message.answer(
+                moderation_text,
+                parse_mode="HTML",
+                reply_markup=moderation_keyboard(
+                    story_id,
+                    user_id,
+                ),
+            )
+
+        except Exception as error:
+            print(
+                f"MODERATION CARD ERROR "
+                f"(story {story_id}): {error}"
+            )
+
+            # Запасной вариант, если карточка слишком большая
+            await message.answer(
+                f"📥 <b>История #{story_id}</b>\n\n"
+                f"👤 User ID: <code>{user_id}</code>\n\n"
+                f"{escape(story['text'])}",
+                parse_mode="HTML",
+                reply_markup=moderation_keyboard(
+                    story_id,
+                    user_id,
+                ),
+            )
 
 
 # =========================================================
