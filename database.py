@@ -3,10 +3,16 @@ import sqlite3
 from pathlib import Path
 
 
-DB_PATH = Path(os.getenv("DB_PATH", "bot.db"))
+DB_PATH = Path(
+    os.getenv("DB_PATH", "bot.db")
+)
+
 
 if DB_PATH.parent and str(DB_PATH.parent) != ".":
-    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+    DB_PATH.parent.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
 
 
 def get_connection():
@@ -14,13 +20,25 @@ def get_connection():
         DB_PATH,
         check_same_thread=False,
     )
+
     connection.row_factory = sqlite3.Row
+
     return connection
 
 
+# =========================================================
+# DATABASE INITIALIZATION
+# =========================================================
+
 def init_db():
+
     connection = get_connection()
+
     cursor = connection.cursor()
+
+    # =====================================================
+    # STORIES
+    # =====================================================
 
     cursor.execute(
         """
@@ -35,6 +53,10 @@ def init_db():
         )
         """
     )
+
+    # =====================================================
+    # SUPPORT DIALOGS
+    # =====================================================
 
     cursor.execute(
         """
@@ -53,6 +75,10 @@ def init_db():
         """
     )
 
+    # =====================================================
+    # SUPPORT MESSAGES
+    # =====================================================
+
     cursor.execute(
         """
         CREATE TABLE IF NOT EXISTS support_messages (
@@ -62,21 +88,44 @@ def init_db():
             sender_type TEXT NOT NULL,
             text TEXT NOT NULL,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY(dialog_id) REFERENCES support_dialogs(id)
+            FOREIGN KEY(dialog_id)
+                REFERENCES support_dialogs(id)
         )
         """
     )
 
-    # Мягкая миграция для существующей базы.
-    # Если проект обновляется, старые таблицы не удаляются,
-    # а недостающие колонки добавляются автоматически.
+    # =====================================================
+    # USERS
+    #
+    # Здесь храним расписание ежедневного уведомления
+    # об экстренной поддержке.
+    # =====================================================
+
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS users (
+            user_id INTEGER PRIMARY KEY,
+            notification_date TEXT,
+            notification_minute INTEGER,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+        """
+    )
+
+    # =====================================================
+    # SOFT MIGRATIONS
+    # =====================================================
+
     migrations = {
+
         "stories": {
             "ai_result": "TEXT",
             "post_text": "TEXT",
             "status": "TEXT DEFAULT 'waiting'",
             "created_at": "TIMESTAMP",
         },
+
         "support_dialogs": {
             "first_message": "TEXT",
             "status": "TEXT DEFAULT 'open'",
@@ -87,9 +136,17 @@ def init_db():
             "created_at": "TIMESTAMP DEFAULT CURRENT_TIMESTAMP",
             "updated_at": "TIMESTAMP",
         },
+
+        "users": {
+            "notification_date": "TEXT",
+            "notification_minute": "INTEGER",
+            "created_at": "TIMESTAMP DEFAULT CURRENT_TIMESTAMP",
+            "updated_at": "TIMESTAMP DEFAULT CURRENT_TIMESTAMP",
+        },
     }
 
     for table, columns in migrations.items():
+
         existing = {
             row["name"]
             for row in connection.execute(
@@ -98,12 +155,195 @@ def init_db():
         }
 
         for column, definition in columns.items():
+
             if column not in existing:
+
                 connection.execute(
-                    f"ALTER TABLE {table} ADD COLUMN {column} {definition}"
+                    f"""
+                    ALTER TABLE {table}
+                    ADD COLUMN {column} {definition}
+                    """
                 )
 
     connection.commit()
+
+    connection.close()
+
+
+# =========================================================
+# USERS
+# =========================================================
+
+def register_user(
+    user_id: int,
+):
+    """
+    Регистрирует пользователя.
+
+    Для нового пользователя назначается случайное
+    время ежедневного уведомления.
+
+    Интервал:
+    10:00 — 21:00
+    """
+
+    import random
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    timezone = ZoneInfo(
+        "Europe/Oslo"
+    )
+
+    today = (
+        datetime
+        .now(timezone)
+        .date()
+        .isoformat()
+    )
+
+    connection = get_connection()
+
+    row = connection.execute(
+        """
+        SELECT
+            user_id,
+            notification_date,
+            notification_minute
+        FROM users
+        WHERE user_id = ?
+        """,
+        (user_id,),
+    ).fetchone()
+
+    # -----------------------------------------------------
+    # Новый пользователь
+    # -----------------------------------------------------
+
+    if row is None:
+
+        notification_minute = random.randint(
+            10 * 60,
+            21 * 60,
+        )
+
+        connection.execute(
+            """
+            INSERT INTO users (
+                user_id,
+                notification_date,
+                notification_minute
+            )
+            VALUES (?, ?, ?)
+            """,
+            (
+                user_id,
+                today,
+                notification_minute,
+            ),
+        )
+
+    # -----------------------------------------------------
+    # Пользователь уже есть,
+    # но расписание отсутствует
+    # -----------------------------------------------------
+
+    elif (
+        row["notification_date"] is None
+        or row["notification_minute"] is None
+    ):
+
+        notification_minute = random.randint(
+            10 * 60,
+            21 * 60,
+        )
+
+        connection.execute(
+            """
+            UPDATE users
+            SET
+                notification_date = ?,
+                notification_minute = ?,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE user_id = ?
+            """,
+            (
+                today,
+                notification_minute,
+                user_id,
+            ),
+        )
+
+    connection.commit()
+
+    connection.close()
+
+
+def get_due_notification_users(
+    date_iso: str,
+    current_minute: int,
+):
+    """
+    Возвращает пользователей,
+    которым уже пора отправить
+    сегодняшнее уведомление.
+    """
+
+    connection = get_connection()
+
+    rows = connection.execute(
+        """
+        SELECT user_id
+        FROM users
+        WHERE notification_date <= ?
+          AND notification_minute <= ?
+        ORDER BY user_id
+        """,
+        (
+            date_iso,
+            current_minute,
+        ),
+    ).fetchall()
+
+    connection.close()
+
+    return [
+        row["user_id"]
+        for row in rows
+    ]
+
+
+def mark_notification_sent(
+    user_id: int,
+    next_date_iso: str,
+    next_minute: int,
+):
+    """
+    После отправки уведомления
+    переносим следующее уведомление
+    на следующий день.
+    """
+
+    connection = get_connection()
+
+    connection.execute(
+        """
+        UPDATE users
+        SET
+            notification_date = ?,
+            notification_minute = ?,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE user_id = ?
+        """,
+        (
+            next_date_iso,
+            next_minute,
+            user_id,
+        ),
+    )
+
+    connection.commit()
+
     connection.close()
 
 
@@ -111,28 +351,44 @@ def init_db():
 # STORIES
 # =========================================================
 
-def create_story(user_id: int, text: str):
+def create_story(
+    user_id: int,
+    text: str,
+):
+
     connection = get_connection()
 
     cursor = connection.cursor()
 
     cursor.execute(
         """
-        INSERT INTO stories (user_id, text, status)
+        INSERT INTO stories (
+            user_id,
+            text,
+            status
+        )
         VALUES (?, ?, 'waiting')
         """,
-        (user_id, text),
+        (
+            user_id,
+            text,
+        ),
     )
 
     story_id = cursor.lastrowid
 
     connection.commit()
+
     connection.close()
 
     return story_id
 
 
-def update_ai_result(story_id: int, ai_result: str):
+def update_ai_result(
+    story_id: int,
+    ai_result: str,
+):
+
     connection = get_connection()
 
     connection.execute(
@@ -141,14 +397,22 @@ def update_ai_result(story_id: int, ai_result: str):
         SET ai_result = ?
         WHERE id = ?
         """,
-        (ai_result, story_id),
+        (
+            ai_result,
+            story_id,
+        ),
     )
 
     connection.commit()
+
     connection.close()
 
 
-def update_post(story_id: int, post_text: str):
+def update_post(
+    story_id: int,
+    post_text: str,
+):
+
     connection = get_connection()
 
     connection.execute(
@@ -157,14 +421,21 @@ def update_post(story_id: int, post_text: str):
         SET post_text = ?
         WHERE id = ?
         """,
-        (post_text, story_id),
+        (
+            post_text,
+            story_id,
+        ),
     )
 
     connection.commit()
+
     connection.close()
 
 
-def get_story(story_id: int):
+def get_story(
+    story_id: int,
+):
+
     connection = get_connection()
 
     row = connection.execute(
@@ -173,7 +444,9 @@ def get_story(story_id: int):
         FROM stories
         WHERE id = ?
         """,
-        (story_id,),
+        (
+            story_id,
+        ),
     ).fetchone()
 
     connection.close()
@@ -181,7 +454,10 @@ def get_story(story_id: int):
     return row
 
 
-def publish_story(story_id: int):
+def publish_story(
+    story_id: int,
+):
+
     connection = get_connection()
 
     connection.execute(
@@ -190,14 +466,20 @@ def publish_story(story_id: int):
         SET status = 'published'
         WHERE id = ?
         """,
-        (story_id,),
+        (
+            story_id,
+        ),
     )
 
     connection.commit()
+
     connection.close()
 
 
-def reject_story(story_id: int):
+def reject_story(
+    story_id: int,
+):
+
     connection = get_connection()
 
     connection.execute(
@@ -206,14 +488,18 @@ def reject_story(story_id: int):
         SET status = 'rejected'
         WHERE id = ?
         """,
-        (story_id,),
+        (
+            story_id,
+        ),
     )
 
     connection.commit()
+
     connection.close()
 
 
 def get_waiting_stories():
+
     connection = get_connection()
 
     rows = connection.execute(
@@ -231,6 +517,7 @@ def get_waiting_stories():
 
 
 def get_all_stories():
+
     connection = get_connection()
 
     rows = connection.execute(
@@ -247,6 +534,7 @@ def get_all_stories():
 
 
 def get_stats():
+
     connection = get_connection()
 
     total = connection.execute(
@@ -298,6 +586,7 @@ def create_support_dialog(
     user_id: int,
     first_message: str,
 ):
+
     connection = get_connection()
 
     cursor = connection.cursor()
@@ -311,9 +600,18 @@ def create_support_dialog(
             support_status,
             unread_admin
         )
-        VALUES (?, ?, 'open', 'new', 1)
+        VALUES (
+            ?,
+            ?,
+            'open',
+            'new',
+            1
+        )
         """,
-        (user_id, first_message),
+        (
+            user_id,
+            first_message,
+        ),
     )
 
     dialog_id = cursor.lastrowid
@@ -336,12 +634,16 @@ def create_support_dialog(
     )
 
     connection.commit()
+
     connection.close()
 
     return dialog_id
 
 
-def get_open_dialog_by_user(user_id: int):
+def get_open_dialog_by_user(
+    user_id: int,
+):
+
     connection = get_connection()
 
     row = connection.execute(
@@ -349,11 +651,13 @@ def get_open_dialog_by_user(user_id: int):
         SELECT *
         FROM support_dialogs
         WHERE user_id = ?
-        AND status = 'open'
+          AND status = 'open'
         ORDER BY id DESC
         LIMIT 1
         """,
-        (user_id,),
+        (
+            user_id,
+        ),
     ).fetchone()
 
     connection.close()
@@ -361,7 +665,10 @@ def get_open_dialog_by_user(user_id: int):
     return row
 
 
-def get_dialog(dialog_id: int):
+def get_dialog(
+    dialog_id: int,
+):
+
     connection = get_connection()
 
     row = connection.execute(
@@ -370,7 +677,9 @@ def get_dialog(dialog_id: int):
         FROM support_dialogs
         WHERE id = ?
         """,
-        (dialog_id,),
+        (
+            dialog_id,
+        ),
     ).fetchone()
 
     connection.close()
@@ -378,7 +687,10 @@ def get_dialog(dialog_id: int):
     return row
 
 
-def get_dialog_messages(dialog_id: int):
+def get_dialog_messages(
+    dialog_id: int,
+):
+
     connection = get_connection()
 
     rows = connection.execute(
@@ -388,7 +700,9 @@ def get_dialog_messages(dialog_id: int):
         WHERE dialog_id = ?
         ORDER BY id ASC
         """,
-        (dialog_id,),
+        (
+            dialog_id,
+        ),
     ).fetchall()
 
     connection.close()
@@ -402,6 +716,7 @@ def add_support_message(
     sender_type: str,
     text: str,
 ):
+
     connection = get_connection()
 
     connection.execute(
@@ -423,30 +738,41 @@ def add_support_message(
     )
 
     if sender_type == "user":
+
         connection.execute(
             """
             UPDATE support_dialogs
-            SET unread_admin = unread_admin + 1,
+            SET
+                unread_admin = unread_admin + 1,
                 updated_at = CURRENT_TIMESTAMP
             WHERE id = ?
             """,
-            (dialog_id,),
+            (
+                dialog_id,
+            ),
         )
+
     else:
+
         connection.execute(
             """
             UPDATE support_dialogs
-            SET updated_at = CURRENT_TIMESTAMP
+            SET
+                updated_at = CURRENT_TIMESTAMP
             WHERE id = ?
             """,
-            (dialog_id,),
+            (
+                dialog_id,
+            ),
         )
 
     connection.commit()
+
     connection.close()
 
 
 def get_open_dialogs():
+
     connection = get_connection()
 
     rows = connection.execute(
@@ -471,13 +797,18 @@ def get_open_dialogs():
     return rows
 
 
-def assign_dialog(dialog_id: int, admin_id: int):
+def assign_dialog(
+    dialog_id: int,
+    admin_id: int,
+):
+
     connection = get_connection()
 
     connection.execute(
         """
         UPDATE support_dialogs
-        SET assigned_admin_id = ?,
+        SET
+            assigned_admin_id = ?,
             support_status = 'in_progress',
             updated_at = CURRENT_TIMESTAMP
         WHERE id = ?
@@ -489,46 +820,64 @@ def assign_dialog(dialog_id: int, admin_id: int):
     )
 
     connection.commit()
+
     connection.close()
 
 
-def unassign_dialog(dialog_id: int):
+def unassign_dialog(
+    dialog_id: int,
+):
+
     connection = get_connection()
 
     connection.execute(
         """
         UPDATE support_dialogs
-        SET assigned_admin_id = NULL,
+        SET
+            assigned_admin_id = NULL,
             updated_at = CURRENT_TIMESTAMP
         WHERE id = ?
         """,
-        (dialog_id,),
+        (
+            dialog_id,
+        ),
     )
 
     connection.commit()
+
     connection.close()
 
 
-def close_dialog(dialog_id: int):
+def close_dialog(
+    dialog_id: int,
+):
+
     connection = get_connection()
 
     connection.execute(
         """
         UPDATE support_dialogs
-        SET status = 'closed',
+        SET
+            status = 'closed',
             support_status = 'closed',
             assigned_admin_id = NULL,
             updated_at = CURRENT_TIMESTAMP
         WHERE id = ?
         """,
-        (dialog_id,),
+        (
+            dialog_id,
+        ),
     )
 
     connection.commit()
+
     connection.close()
 
 
-def mark_dialog_read_by_admin(dialog_id: int):
+def mark_dialog_read_by_admin(
+    dialog_id: int,
+):
+
     connection = get_connection()
 
     connection.execute(
@@ -537,20 +886,28 @@ def mark_dialog_read_by_admin(dialog_id: int):
         SET unread_admin = 0
         WHERE id = ?
         """,
-        (dialog_id,),
+        (
+            dialog_id,
+        ),
     )
 
     connection.commit()
+
     connection.close()
 
 
-def set_dialog_status(dialog_id: int, status: str):
+def set_dialog_status(
+    dialog_id: int,
+    status: str,
+):
+
     connection = get_connection()
 
     connection.execute(
         """
         UPDATE support_dialogs
-        SET support_status = ?,
+        SET
+            support_status = ?,
             updated_at = CURRENT_TIMESTAMP
         WHERE id = ?
         """,
@@ -561,10 +918,14 @@ def set_dialog_status(dialog_id: int, status: str):
     )
 
     connection.commit()
+
     connection.close()
 
 
-def request_personal_contact(dialog_id: int):
+def request_personal_contact(
+    dialog_id: int,
+):
+
     connection = get_connection()
 
     row = connection.execute(
@@ -573,28 +934,38 @@ def request_personal_contact(dialog_id: int):
         FROM support_dialogs
         WHERE id = ?
         """,
-        (dialog_id,),
+        (
+            dialog_id,
+        ),
     ).fetchone()
 
     if row is None:
+
         connection.close()
+
         return False
 
     if row["personal_contact_requested"]:
+
         connection.close()
+
         return False
 
     connection.execute(
         """
         UPDATE support_dialogs
-        SET personal_contact_requested = 1,
+        SET
+            personal_contact_requested = 1,
             updated_at = CURRENT_TIMESTAMP
         WHERE id = ?
         """,
-        (dialog_id,),
+        (
+            dialog_id,
+        ),
     )
 
     connection.commit()
+
     connection.close()
 
     return True
