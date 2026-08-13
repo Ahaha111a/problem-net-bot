@@ -6,6 +6,7 @@ from aiogram.types import (
     Message,
     InlineKeyboardMarkup,
     InlineKeyboardButton,
+    ReplyKeyboardRemove,
 )
 from aiogram.fsm.context import FSMContext
 from aiogram.filters import Command, StateFilter
@@ -105,7 +106,7 @@ def materials_keyboard():
                     callback_data="material:self_esteem",
                 ),
             ],
-        ],
+        ]
     )
 
 
@@ -127,7 +128,7 @@ def daily_tip_keyboard():
                     callback_data="material:support",
                 ),
             ],
-        ],
+        ]
     )
 
 
@@ -213,10 +214,6 @@ async def switch_to_admin_mode(
     )
 
 
-# =========================================================
-# USER MODE
-# =========================================================
-
 @router.message(F.text == "👤 Режим пользователя")
 async def switch_to_user_mode(
     message: Message,
@@ -287,10 +284,6 @@ async def emergency_support(
     )
 
 
-# =========================================================
-# SUPPORT — USER MESSAGE
-# =========================================================
-
 @router.message(StoryState.waiting_for_support_message)
 async def receive_support_message(
     message: Message,
@@ -328,7 +321,6 @@ async def receive_support_message(
             dialog_id,
             "in_progress",
         )
-
     else:
         dialog_id = create_support_dialog(
             user_id,
@@ -372,7 +364,6 @@ async def notify_admins_about_message(
                 ),
                 parse_mode="HTML",
             )
-
         except Exception as error:
             print(
                 f"DIALOG ADMIN ERROR: {error}"
@@ -395,9 +386,14 @@ async def start_story(
     )
 
     await message.answer(
-        "💙 Расскажите свою историю.\n\n"
+        "💙 <b>Расскажите свою историю</b>\n\n"
         "Можно написать всё, что вас беспокоит.\n\n"
-        "🔒 История будет обработана анонимно."
+        "🔒 История будет обработана анонимно.\n\n"
+        "Чтобы отменить — используйте /start.",
+        parse_mode="HTML",
+        reply_markup=ReplyKeyboardRemove(
+            remove_keyboard=True
+        ),
     )
 
 
@@ -430,7 +426,9 @@ async def receive_story(
     )
 
     try:
-        ai_result = await analyze_story(story)
+        ai_result = await analyze_story(
+            story
+        )
 
     except Exception as error:
         print(
@@ -449,7 +447,9 @@ async def receive_story(
     )
 
     try:
-        post_text = await create_post(story)
+        post_text = await create_post(
+            story
+        )
 
     except Exception as error:
         print(
@@ -465,7 +465,8 @@ async def receive_story(
 
     moderation_text = (
         f"📥 <b>Новая история #{story_id}</b>\n\n"
-        f"👤 User ID: <code>{message.from_user.id}</code>\n\n"
+        f"👤 User ID: "
+        f"<code>{message.from_user.id}</code>\n\n"
         f"💭 <b>Текст:</b>\n\n"
         f"{escape(story)}\n\n"
         "━━━━━━━━━━━━━━\n\n"
@@ -495,36 +496,35 @@ async def receive_story(
 
     await state.clear()
 
-    await message.answer(
-        "💙 Спасибо, что поделились.\n\n"
-        "Ваша история отправлена на рассмотрение."
-    )
-
     if is_admin(message.from_user.id):
         await message.answer(
-            "👤 Вы остались в режиме пользователя.",
+            "💙 История отправлена на рассмотрение.",
             reply_markup=admin_user_keyboard,
+        )
+    else:
+        await message.answer(
+            "💙 Спасибо, что поделились.\n\n"
+            "Ваша история отправлена на рассмотрение.",
+            reply_markup=main_keyboard,
         )
 
 
 # =========================================================
 # ACTIVE USER SUPPORT
-#
-# ВАЖНО:
-# Этот handler теперь работает ТОЛЬКО для НЕ-АДМИНИСТРАТОРОВ.
-# Поэтому админские кнопки не перехватываются.
 # =========================================================
 
 @router.message(
     StateFilter(None),
     F.chat.type == "private",
     F.text,
-    ~F.from_user.id.in_(ADMIN_IDS),
 )
 async def active_support_message(
     message: Message,
     state: FSMContext,
 ):
+    if is_admin(message.from_user.id):
+        return
+
     menu_buttons = {
         "📝 Поделиться историей",
         "💡 Совет дня",
@@ -618,7 +618,7 @@ async def dialogs_menu(message: Message):
             f"👤 User ID: "
             f"<code>{dialog['user_id']}</code>\n\n"
             f"{'🔴 Новых сообщений: ' + str(unread) if unread else '🟢 Нет новых сообщений'}\n\n"
-            f"Последнее сообщение:\n"
+            "Последнее сообщение:\n"
             f"{escape(last_message)}"
         )
 
@@ -632,7 +632,7 @@ async def dialogs_menu(message: Message):
                         ),
                     ),
                 ],
-            ],
+            ]
         )
 
         await message.answer(
@@ -655,126 +655,28 @@ async def moderation(message: Message):
 
     if not stories:
         await message.answer(
-            "🟢 <b>Модерация</b>\n\n"
-            "Сейчас нет историй, ожидающих проверки.",
-            parse_mode="HTML",
+            "🟢 На модерации сейчас ничего нет.",
             reply_markup=admin_keyboard,
         )
         return
 
     await message.answer(
-        "⏳ <b>Модерация</b>\n\n"
-        f"Историй ожидает проверки: <b>{len(stories)}</b>\n\n"
-        "Ниже отображены последние истории.",
+        f"⏳ <b>На модерации: {len(stories)}</b>",
         parse_mode="HTML",
     )
 
     for story in stories[:20]:
-
-        story_id = story["id"]
-        user_id = story["user_id"]
-
-        original_text = story["text"] or ""
-        ai_result = story["ai_result"] or ""
-        post_text = story["post_text"] or ""
-
-        # -------------------------------------------------
-        # Ограничиваем слишком длинные поля
-        # -------------------------------------------------
-
-        if len(original_text) > 3500:
-            original_text = (
-                original_text[:3500]
-                + "\n\n… <i>текст сокращён</i>"
-            )
-
-        if len(ai_result) > 3000:
-            ai_result = (
-                ai_result[:3000]
-                + "\n\n… <i>анализ сокращён</i>"
-            )
-
-        if len(post_text) > 3500:
-            post_text = (
-                post_text[:3500]
-                + "\n\n… <i>пост сокращён</i>"
-            )
-
-        # -------------------------------------------------
-        # Если пост ещё не создан
-        # -------------------------------------------------
-
-        if not post_text.strip():
-            post_text = (
-                "⚠️ <i>Готовый пост отсутствует.</i>\n\n"
-                "Используйте кнопку «✏️ Изменить», "
-                "чтобы добавить текст вручную."
-            )
-
-        # -------------------------------------------------
-        # Если AI-анализ отсутствует
-        # -------------------------------------------------
-
-        if not ai_result.strip():
-            ai_result = (
-                "⚠️ <i>AI-анализ отсутствует.</i>"
-            )
-
-        # -------------------------------------------------
-        # Карточка истории
-        # -------------------------------------------------
-
-        moderation_text = (
-            "━━━━━━━━━━━━━━━━━━\n"
-            f"📥 <b>ИСТОРИЯ #{story_id}</b>\n"
-            "━━━━━━━━━━━━━━━━━━\n\n"
-
-            f"👤 <b>Автор:</b> "
-            f"<code>{user_id}</code>\n\n"
-
-            "💭 <b>ИСХОДНЫЙ ТЕКСТ</b>\n\n"
-            f"{escape(original_text)}\n\n"
-
-            "━━━━━━━━━━━━━━━━━━\n\n"
-
-            "🤖 <b>АНАЛИЗ AI</b>\n\n"
-            f"{escape(ai_result)}\n\n"
-
-            "━━━━━━━━━━━━━━━━━━\n\n"
-
-            "📌 <b>ГОТОВЫЙ ПОСТ</b>\n\n"
-            f"{escape(post_text)}\n\n"
-
-            "━━━━━━━━━━━━━━━━━━"
+        await message.answer(
+            f"📥 <b>История #{story['id']}</b>\n\n"
+            f"👤 User ID: "
+            f"<code>{story['user_id']}</code>\n\n"
+            f"{escape(story['text'])}",
+            parse_mode="HTML",
+            reply_markup=moderation_keyboard(
+                story["id"],
+                story["user_id"],
+            ),
         )
-
-        try:
-            await message.answer(
-                moderation_text,
-                parse_mode="HTML",
-                reply_markup=moderation_keyboard(
-                    story_id,
-                    user_id,
-                ),
-            )
-
-        except Exception as error:
-            print(
-                f"MODERATION CARD ERROR "
-                f"(story {story_id}): {error}"
-            )
-
-            # Запасной вариант, если карточка слишком большая
-            await message.answer(
-                f"📥 <b>История #{story_id}</b>\n\n"
-                f"👤 User ID: <code>{user_id}</code>\n\n"
-                f"{escape(story['text'])}",
-                parse_mode="HTML",
-                reply_markup=moderation_keyboard(
-                    story_id,
-                    user_id,
-                ),
-            )
 
 
 # =========================================================
