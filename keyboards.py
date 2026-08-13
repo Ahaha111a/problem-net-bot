@@ -276,3 +276,105 @@ def moderation_keyboard(
                     callback_data=f"publish:{story_id}",
                 ),
             ],
+            [
+                InlineKeyboardButton(
+                    text="❌ Отклонить",
+                    callback_data=f"reject:{story_id}",
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    text="👤 Написать пользователю",
+                    callback_data=f"contact:{story_id}",
+                ),
+            ],
+        ],
+    )
+
+
+# =========================================================
+# SUPPORT — NEW MESSAGE
+# =========================================================
+
+def support_new_message_keyboard(
+    dialog_id: int,
+):
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="💬 Открыть диалог",
+                    callback_data=f"dialog_open:{dialog_id}",
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    text="📞 Связаться лично",
+                    callback_data=f"dialog_personal:{dialog_id}",
+                ),
+            ],
+        ],
+    )
+
+
+# =========================================================
+# SUPPORT — ACTIVE DIALOG
+# =========================================================
+
+def support_dialog_keyboard(
+    dialog_id: int,
+):
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="📞 Связаться лично",
+                    callback_data=f"dialog_personal:{dialog_id}",
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    text="🟠 Ожидает пользователя",
+                    callback_data=f"dialog_waiting:{dialog_id}",
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    text="⬅️ Выйти из диалога",
+                    callback_data=f"dialog_exit:{dialog_id}",
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    text="🔴 Закрыть диалог",
+                    callback_data=f"dialog_close:{dialog_id}",
+                ),
+            ],
+        ],
+    )
+
+
+# =========================================================
+# PERSONAL REQUEST — ADMIN
+# =========================================================
+
+def personal_request_keyboard(
+    dialog_id: int,
+    user_id: int,
+):
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="👤 Открыть профиль пользователя",
+                    url=f"tg://user?id={user_id}",
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    text="💬 Открыть диалог",
+                    callback_data=f"dialog_open:{dialog_id}",
+                ),
+            ],
+        ],
+    )
