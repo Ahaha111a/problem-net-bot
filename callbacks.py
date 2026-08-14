@@ -31,7 +31,9 @@ from keyboards import (
     personal_request_keyboard,
     material_actions_keyboard,
     admin_keyboard,
+    published_story_keyboard,
 )
+
 
 callback_router = Router()
 
@@ -44,8 +46,13 @@ def is_admin(user_id: int) -> bool:
     return user_id in ADMIN_IDS
 
 
-async def check_admin(callback: CallbackQuery) -> bool:
-    if not is_admin(callback.from_user.id):
+async def check_admin(
+    callback: CallbackQuery,
+) -> bool:
+
+    if not is_admin(
+        callback.from_user.id
+    ):
         await callback.answer(
             "⛔ У вас нет доступа.",
             show_alert=True,
@@ -55,51 +62,70 @@ async def check_admin(callback: CallbackQuery) -> bool:
     return True
 
 
-def get_id_from_callback(callback: CallbackQuery):
+def get_id_from_callback(
+    callback: CallbackQuery,
+):
     try:
-        return int(callback.data.split(":", 1)[1])
-    except (ValueError, IndexError, AttributeError):
+        return int(
+            callback.data.split(
+                ":",
+                1,
+            )[1]
+        )
+
+    except (
+        ValueError,
+        IndexError,
+        AttributeError,
+    ):
         return None
 
 
-async def safe_remove_keyboard(callback: CallbackQuery):
+async def safe_remove_keyboard(
+    callback: CallbackQuery,
+):
     try:
         if callback.message:
             await callback.message.edit_reply_markup(
                 reply_markup=None
             )
+
     except Exception:
         pass
 
 
-def get_channel_post_url(message_id: int) -> str | None:
+async def get_channel_message_link(
+    bot,
+    message_id: int,
+):
     """
-    Создаёт ссылку на опубликованный пост.
+    Формирует ссылку на конкретное сообщение канала.
 
-    Для публичного канала:
-        CHANNEL_ID=@channel_name
+    Публичный канал:
+        https://t.me/channel_username/message_id
 
-    Для приватного канала:
-        CHANNEL_ID=-1001234567890
+    Приватный канал:
+        https://t.me/c/channel_id/message_id
     """
 
-    channel = str(CHANNEL_ID).strip()
-
-    # Публичный канал
-    if channel.startswith("@"):
-        username = channel[1:]
-
-        if username:
-            return f"https://t.me/{username}/{message_id}"
-
-        return None
-
-    # Числовой ID канала
     try:
-        numeric_id = int(channel)
+        chat = await bot.get_chat(
+            chat_id=CHANNEL_ID
+        )
 
-        if str(numeric_id).startswith("-100"):
-            internal_id = str(numeric_id)[4:]
+        # Публичный канал
+        if chat.username:
+            return (
+                f"https://t.me/"
+                f"{chat.username}/"
+                f"{message_id}"
+            )
+
+        # Приватный канал
+        chat_id = str(chat.id)
+
+        if chat_id.startswith("-100"):
+            internal_id = chat_id[4:]
 
             return (
                 f"https://t.me/c/"
@@ -107,8 +133,10 @@ def get_channel_post_url(message_id: int) -> str | None:
                 f"{message_id}"
             )
 
-    except ValueError:
-        pass
+    except Exception as error:
+        print(
+            f"CHANNEL LINK ERROR: {error}"
+        )
 
     return None
 
@@ -124,13 +152,16 @@ async def support_method_bot(
     callback: CallbackQuery,
     state: FSMContext,
 ):
+
     await callback.answer()
 
     await state.set_state(
         StoryState.waiting_for_support_message
     )
 
-    await safe_remove_keyboard(callback)
+    await safe_remove_keyboard(
+        callback
+    )
 
     await callback.message.answer(
         "💬 <b>Продолжаем здесь</b>\n\n"
@@ -152,12 +183,16 @@ async def support_method_personal(
     callback: CallbackQuery,
     state: FSMContext,
 ):
+
     user_id = callback.from_user.id
 
-    dialog = get_open_dialog_by_user(user_id)
+    dialog = get_open_dialog_by_user(
+        user_id
+    )
 
     if dialog:
         dialog_id = dialog["id"]
+
     else:
         dialog_id = create_support_dialog(
             user_id,
@@ -171,9 +206,13 @@ async def support_method_personal(
     )
 
     await state.clear()
-    await safe_remove_keyboard(callback)
+
+    await safe_remove_keyboard(
+        callback
+    )
 
     if sent:
+
         await callback.answer(
             "📞 Запрос передан сотруднику."
         )
@@ -184,7 +223,9 @@ async def support_method_personal(
             "запрос на личный контакт.",
             parse_mode="HTML",
         )
+
     else:
+
         await callback.answer(
             "ℹ️ Запрос уже был передан."
         )
@@ -205,29 +246,38 @@ async def support_method_personal(
 async def support_personal_request(
     callback: CallbackQuery,
 ):
+
     user_id = callback.from_user.id
 
-    dialog = get_open_dialog_by_user(user_id)
+    dialog = get_open_dialog_by_user(
+        user_id
+    )
 
     if dialog:
         dialog_id = dialog["id"]
+
     else:
         dialog_id = create_support_dialog(
             user_id,
             "Пользователь запросил личный контакт с сотрудником поддержки.",
         )
 
-    new_request = await send_personal_request_to_admins(
-        callback.bot,
-        dialog_id,
-        user_id,
+    new_request = (
+        await send_personal_request_to_admins(
+            callback.bot,
+            dialog_id,
+            user_id,
+        )
     )
 
     if new_request:
+
         await callback.answer(
             "📞 Запрос передан сотруднику."
         )
+
     else:
+
         await callback.answer(
             "📞 Запрос уже находится у сотрудника."
         )
@@ -238,6 +288,7 @@ async def send_personal_request_to_admins(
     dialog_id: int,
     user_id: int,
 ):
+
     new_request = request_personal_contact(
         dialog_id
     )
@@ -256,13 +307,17 @@ async def send_personal_request_to_admins(
     sent_to_any_admin = False
 
     for admin_id in ADMIN_IDS:
+
         try:
+
             await bot.send_message(
                 admin_id,
                 text,
-                reply_markup=personal_request_keyboard(
-                    dialog_id,
-                    user_id,
+                reply_markup=(
+                    personal_request_keyboard(
+                        dialog_id,
+                        user_id,
+                    )
                 ),
                 parse_mode="HTML",
             )
@@ -270,6 +325,7 @@ async def send_personal_request_to_admins(
             sent_to_any_admin = True
 
         except Exception as error:
+
             print(
                 f"PERSONAL REQUEST ERROR: {error}"
             )
@@ -287,75 +343,122 @@ async def send_personal_request_to_admins(
 async def publish_handler(
     callback: CallbackQuery,
 ):
-    if not await check_admin(callback):
+
+    if not await check_admin(
+        callback
+    ):
         return
 
-    story_id = get_id_from_callback(callback)
+    story_id = get_id_from_callback(
+        callback
+    )
 
     if story_id is None:
+
         await callback.answer(
             "❌ Некорректный ID истории.",
             show_alert=True,
         )
+
         return
 
-    story = get_story(story_id)
+    story = get_story(
+        story_id
+    )
 
     if story is None:
+
         await callback.answer(
             "❌ История не найдена.",
             show_alert=True,
         )
+
         return
 
     if story["status"] != "waiting":
+
         await callback.answer(
             "ℹ️ История уже обработана.",
             show_alert=True,
         )
+
         return
 
     post_text = story["post_text"]
 
     if not post_text or not post_text.strip():
+
         await callback.answer(
             "❌ Готовый пост отсутствует.",
             show_alert=True,
         )
+
         return
 
     try:
-        sent_message = await callback.bot.send_message(
-            chat_id=CHANNEL_ID,
-            text=post_text,
+
+        # =================================================
+        # ПУБЛИКАЦИЯ В КАНАЛ
+        # =================================================
+
+        sent_message = (
+            await callback.bot.send_message(
+                chat_id=CHANNEL_ID,
+                text=post_text,
+            )
         )
 
-        publish_story(story_id)
+        # =================================================
+        # ПОЛУЧАЕМ ID ОПУБЛИКОВАННОГО СООБЩЕНИЯ
+        # =================================================
 
-        # Ссылка на опубликованный пост
-        post_url = get_channel_post_url(
+        channel_message_id = (
             sent_message.message_id
         )
 
+        # =================================================
+        # МЕНЯЕМ СТАТУС ИСТОРИИ
+        # =================================================
+
+        publish_story(
+            story_id
+        )
+
+        # =================================================
+        # ФОРМИРУЕМ ССЫЛКУ
+        # =================================================
+
+        post_link = (
+            await get_channel_message_link(
+                callback.bot,
+                channel_message_id,
+            )
+        )
+
+        # =================================================
+        # УВЕДОМЛЕНИЕ ПОЛЬЗОВАТЕЛЮ
+        # =================================================
+
         try:
-            if post_url:
+
+            if post_link:
+
                 await callback.bot.send_message(
                     story["user_id"],
                     "🎉 <b>Ваша история была опубликована!</b>\n\n"
-                    "Спасибо, что поделились ей с нами 💙",
+                    "Спасибо, что поделились ей с нами 💙\n\n"
+                    "Вы можете посмотреть опубликованную историю "
+                    "по кнопке ниже.",
                     parse_mode="HTML",
-                    reply_markup={
-                        "inline_keyboard": [
-                            [
-                                {
-                                    "text": "👀 Посмотреть",
-                                    "url": post_url,
-                                }
-                            ]
-                        ]
-                    },
+                    reply_markup=(
+                        published_story_keyboard(
+                            post_link
+                        )
+                    ),
                 )
+
             else:
+
                 await callback.bot.send_message(
                     story["user_id"],
                     "🎉 <b>Ваша история была опубликована!</b>\n\n"
@@ -364,29 +467,25 @@ async def publish_handler(
                 )
 
         except Exception as error:
+
             print(
                 f"USER PUBLISH NOTIFY ERROR: {error}"
             )
 
-        await safe_remove_keyboard(callback)
+        # =================================================
+        # УБИРАЕМ КНОПКИ МОДЕРАЦИИ
+        # =================================================
+
+        await safe_remove_keyboard(
+            callback
+        )
 
         await callback.answer(
             "✅ История опубликована."
         )
 
-        if post_url:
-            await callback.message.answer(
-                "✅ <b>История опубликована!</b>\n\n"
-                f"👀 <a href=\"{post_url}\">Посмотреть опубликованную историю</a>",
-                parse_mode="HTML",
-            )
-        else:
-            await callback.message.answer(
-                "✅ <b>История опубликована!</b>",
-                parse_mode="HTML",
-            )
-
     except Exception as error:
+
         print(
             f"PUBLISH ERROR: {error}"
         )
@@ -407,60 +506,77 @@ async def publish_handler(
 async def reject_handler(
     callback: CallbackQuery,
 ):
-    if not await check_admin(callback):
+
+    if not await check_admin(
+        callback
+    ):
         return
 
-    story_id = get_id_from_callback(callback)
+    story_id = get_id_from_callback(
+        callback
+    )
 
     if story_id is None:
+
         await callback.answer(
             "❌ Некорректный ID истории.",
             show_alert=True,
         )
+
         return
 
-    story = get_story(story_id)
+    story = get_story(
+        story_id
+    )
 
     if story is None:
+
         await callback.answer(
             "❌ История не найдена.",
             show_alert=True,
         )
+
         return
 
     if story["status"] != "waiting":
+
         await callback.answer(
             "ℹ️ История уже обработана.",
             show_alert=True,
         )
+
         return
 
     try:
-        reject_story(story_id)
+
+        reject_story(
+            story_id
+        )
 
         try:
+
             await callback.bot.send_message(
                 story["user_id"],
                 "ℹ️ Спасибо, что поделились своей историей.\n\n"
                 "К сожалению, сейчас она не может быть опубликована.",
             )
+
         except Exception as error:
+
             print(
                 f"REJECT NOTIFY ERROR: {error}"
             )
 
-        await safe_remove_keyboard(callback)
+        await safe_remove_keyboard(
+            callback
+        )
 
         await callback.answer(
             "❌ История отклонена."
         )
 
-        await callback.message.answer(
-            f"❌ История #{story_id} отклонена.",
-            reply_markup=admin_keyboard,
-        )
-
     except Exception as error:
+
         print(
             f"REJECT ERROR: {error}"
         )
@@ -482,25 +598,36 @@ async def edit_handler(
     callback: CallbackQuery,
     state: FSMContext,
 ):
-    if not await check_admin(callback):
+
+    if not await check_admin(
+        callback
+    ):
         return
 
-    story_id = get_id_from_callback(callback)
+    story_id = get_id_from_callback(
+        callback
+    )
 
     if story_id is None:
+
         await callback.answer(
             "❌ Некорректный ID истории.",
             show_alert=True,
         )
+
         return
 
-    story = get_story(story_id)
+    story = get_story(
+        story_id
+    )
 
     if story is None:
+
         await callback.answer(
             "❌ История не найдена.",
             show_alert=True,
         )
+
         return
 
     await state.clear()
@@ -524,7 +651,7 @@ async def edit_handler(
 
 
 # =========================================================
-# STORIES — CANCEL EDIT
+# STORIES — SAVE EDIT
 # =========================================================
 
 @callback_router.message(
@@ -535,7 +662,11 @@ async def cancel_edit(
     message: Message,
     state: FSMContext,
 ):
-    if not is_admin(message.from_user.id):
+
+    if not is_admin(
+        message.from_user.id
+    ):
+
         await state.clear()
         return
 
@@ -547,10 +678,6 @@ async def cancel_edit(
     )
 
 
-# =========================================================
-# STORIES — SAVE EDIT
-# =========================================================
-
 @callback_router.message(
     StoryState.waiting_for_edit,
 )
@@ -558,7 +685,11 @@ async def save_edited_post(
     message: Message,
     state: FSMContext,
 ):
-    if not is_admin(message.from_user.id):
+
+    if not is_admin(
+        message.from_user.id
+    ):
+
         await state.clear()
 
         await message.answer(
@@ -568,9 +699,11 @@ async def save_edited_post(
         return
 
     if not message.text:
+
         await message.answer(
             "❗ Отправьте текст."
         )
+
         return
 
     data = await state.get_data()
@@ -580,23 +713,25 @@ async def save_edited_post(
     )
 
     if not story_id:
+
         await state.clear()
 
         await message.answer(
-            "❌ История не определена.",
-            reply_markup=admin_keyboard,
+            "❌ История не определена."
         )
 
         return
 
-    story = get_story(story_id)
+    story = get_story(
+        story_id
+    )
 
     if story is None:
+
         await state.clear()
 
         await message.answer(
-            "❌ История не найдена.",
-            reply_markup=admin_keyboard,
+            "❌ История не найдена."
         )
 
         return
@@ -625,25 +760,36 @@ async def contact_user_handler(
     callback: CallbackQuery,
     state: FSMContext,
 ):
-    if not await check_admin(callback):
+
+    if not await check_admin(
+        callback
+    ):
         return
 
-    story_id = get_id_from_callback(callback)
+    story_id = get_id_from_callback(
+        callback
+    )
 
     if story_id is None:
+
         await callback.answer(
             "❌ Некорректный ID истории.",
             show_alert=True,
         )
+
         return
 
-    story = get_story(story_id)
+    story = get_story(
+        story_id
+    )
 
     if story is None:
+
         await callback.answer(
             "❌ История не найдена.",
             show_alert=True,
         )
+
         return
 
     await state.clear()
@@ -680,7 +826,11 @@ async def cancel_contact(
     message: Message,
     state: FSMContext,
 ):
-    if not is_admin(message.from_user.id):
+
+    if not is_admin(
+        message.from_user.id
+    ):
+
         await state.clear()
         return
 
@@ -703,7 +853,11 @@ async def send_contact_message(
     message: Message,
     state: FSMContext,
 ):
-    if not is_admin(message.from_user.id):
+
+    if not is_admin(
+        message.from_user.id
+    ):
+
         await state.clear()
 
         await message.answer(
@@ -713,9 +867,11 @@ async def send_contact_message(
         return
 
     if not message.text:
+
         await message.answer(
             "❗ Отправьте текст."
         )
+
         return
 
     data = await state.get_data()
@@ -729,11 +885,11 @@ async def send_contact_message(
     )
 
     if not user_id:
+
         await state.clear()
 
         await message.answer(
-            "❌ Пользователь не найден.",
-            reply_markup=admin_keyboard,
+            "❌ Пользователь не найден."
         )
 
         return
@@ -741,12 +897,15 @@ async def send_contact_message(
     text = message.text.strip()
 
     if not text:
+
         await message.answer(
             "❗ Сообщение пустое."
         )
+
         return
 
     try:
+
         await message.bot.send_message(
             user_id,
             "💬 <b>Сообщение от команды:</b>\n\n"
@@ -763,6 +922,7 @@ async def send_contact_message(
         )
 
     except Exception as error:
+
         print(
             f"CONTACT ERROR: {error}"
         )
@@ -786,46 +946,65 @@ async def dialog_open_handler(
     callback: CallbackQuery,
     state: FSMContext,
 ):
-    if not await check_admin(callback):
+
+    if not await check_admin(
+        callback
+    ):
         return
 
-    dialog_id = get_id_from_callback(callback)
+    dialog_id = get_id_from_callback(
+        callback
+    )
 
     if dialog_id is None:
+
         await callback.answer(
             "❌ Некорректный ID диалога.",
             show_alert=True,
         )
+
         return
 
-    dialog = get_dialog(dialog_id)
+    dialog = get_dialog(
+        dialog_id
+    )
 
     if dialog is None:
+
         await callback.answer(
             "❌ Диалог не найден.",
             show_alert=True,
         )
+
         return
 
     if dialog["status"] != "open":
+
         await callback.answer(
             "ℹ️ Диалог уже закрыт.",
             show_alert=True,
         )
+
         return
 
-    current_admin_id = callback.from_user.id
+    current_admin_id = (
+        callback.from_user.id
+    )
 
-    assigned_admin = dialog["assigned_admin_id"]
+    assigned_admin = (
+        dialog["assigned_admin_id"]
+    )
 
     if (
         assigned_admin
         and assigned_admin != current_admin_id
     ):
+
         await callback.answer(
             "👨‍💼 Диалог уже ведёт другой сотрудник.",
             show_alert=True,
         )
+
         return
 
     mark_dialog_read_by_admin(
@@ -878,10 +1057,15 @@ async def dialog_open_handler(
     )
 
     if not messages:
-        text += "Сообщений пока нет.\n"
+
+        text += (
+            "Сообщений пока нет.\n"
+        )
 
     else:
+
         for item in messages:
+
             prefix = (
                 "👤 Пользователь"
                 if item["sender_type"] == "user"
@@ -898,8 +1082,10 @@ async def dialog_open_handler(
     await callback.message.answer(
         text,
         parse_mode="HTML",
-        reply_markup=support_dialog_keyboard(
-            dialog_id
+        reply_markup=(
+            support_dialog_keyboard(
+                dialog_id
+            )
         ),
     )
 
@@ -916,7 +1102,11 @@ async def moderator_back(
     message: Message,
     state: FSMContext,
 ):
-    if not is_admin(message.from_user.id):
+
+    if not is_admin(
+        message.from_user.id
+    ):
+
         await state.clear()
         return
 
@@ -927,14 +1117,20 @@ async def moderator_back(
     )
 
     if dialog_id:
-        dialog = get_dialog(dialog_id)
+
+        dialog = get_dialog(
+            dialog_id
+        )
 
         if (
             dialog
             and dialog["assigned_admin_id"]
             == message.from_user.id
         ):
-            unassign_dialog(dialog_id)
+
+            unassign_dialog(
+                dialog_id
+            )
 
     await state.clear()
 
@@ -954,44 +1150,61 @@ async def moderator_back(
 async def dialog_waiting_handler(
     callback: CallbackQuery,
 ):
-    if not await check_admin(callback):
+
+    if not await check_admin(
+        callback
+    ):
         return
 
-    dialog_id = get_id_from_callback(callback)
+    dialog_id = get_id_from_callback(
+        callback
+    )
 
     if dialog_id is None:
+
         await callback.answer(
             "❌ Некорректный ID.",
             show_alert=True,
         )
+
         return
 
-    dialog = get_dialog(dialog_id)
+    dialog = get_dialog(
+        dialog_id
+    )
 
     if dialog is None:
+
         await callback.answer(
             "❌ Диалог не найден.",
             show_alert=True,
         )
+
         return
 
     if dialog["status"] != "open":
+
         await callback.answer(
             "ℹ️ Диалог уже закрыт.",
             show_alert=True,
         )
+
         return
 
-    assigned_admin = dialog["assigned_admin_id"]
+    assigned_admin = (
+        dialog["assigned_admin_id"]
+    )
 
     if (
         assigned_admin
         and assigned_admin != callback.from_user.id
     ):
+
         await callback.answer(
             "⛔ Диалог ведёт другой сотрудник.",
             show_alert=True,
         )
+
         return
 
     set_dialog_status(
@@ -1000,6 +1213,7 @@ async def dialog_waiting_handler(
     )
 
     try:
+
         await callback.bot.send_message(
             dialog["user_id"],
             "🟠 Сотрудник поддержки ожидает вашего ответа.\n\n"
@@ -1007,6 +1221,7 @@ async def dialog_waiting_handler(
         )
 
     except Exception as error:
+
         print(
             f"WAITING USER NOTIFY ERROR: {error}"
         )
@@ -1027,44 +1242,63 @@ async def dialog_exit_handler(
     callback: CallbackQuery,
     state: FSMContext,
 ):
-    if not await check_admin(callback):
+
+    if not await check_admin(
+        callback
+    ):
         return
 
-    dialog_id = get_id_from_callback(callback)
+    dialog_id = get_id_from_callback(
+        callback
+    )
 
     if dialog_id is None:
+
         await callback.answer(
             "❌ Некорректный ID.",
             show_alert=True,
         )
+
         return
 
-    dialog = get_dialog(dialog_id)
+    dialog = get_dialog(
+        dialog_id
+    )
 
     if dialog is None:
+
         await callback.answer(
             "❌ Диалог не найден.",
             show_alert=True,
         )
+
         return
 
-    assigned_admin = dialog["assigned_admin_id"]
+    assigned_admin = (
+        dialog["assigned_admin_id"]
+    )
 
     if (
         assigned_admin
         and assigned_admin != callback.from_user.id
     ):
+
         await callback.answer(
             "⛔ Вы не ведёте этот диалог.",
             show_alert=True,
         )
+
         return
 
-    unassign_dialog(dialog_id)
+    unassign_dialog(
+        dialog_id
+    )
 
     await state.clear()
 
-    await safe_remove_keyboard(callback)
+    await safe_remove_keyboard(
+        callback
+    )
 
     await callback.answer(
         "↩️ Вы вышли из диалога."
@@ -1086,25 +1320,36 @@ async def dialog_exit_handler(
 async def dialog_personal_handler(
     callback: CallbackQuery,
 ):
-    if not await check_admin(callback):
+
+    if not await check_admin(
+        callback
+    ):
         return
 
-    dialog_id = get_id_from_callback(callback)
+    dialog_id = get_id_from_callback(
+        callback
+    )
 
     if dialog_id is None:
+
         await callback.answer(
             "❌ Некорректный ID.",
             show_alert=True,
         )
+
         return
 
-    dialog = get_dialog(dialog_id)
+    dialog = get_dialog(
+        dialog_id
+    )
 
     if dialog is None:
+
         await callback.answer(
             "❌ Диалог не найден.",
             show_alert=True,
         )
+
         return
 
     user_id = dialog["user_id"]
@@ -1125,6 +1370,7 @@ async def dialog_personal_handler(
     )
 
     try:
+
         await callback.bot.send_message(
             user_id,
             "📞 <b>Сотрудник поддержки получил ваш запрос.</b>\n\n"
@@ -1133,6 +1379,7 @@ async def dialog_personal_handler(
         )
 
     except Exception as error:
+
         print(
             f"PERSONAL CONTACT ERROR: {error}"
         )
@@ -1149,44 +1396,62 @@ async def dialog_close_handler(
     callback: CallbackQuery,
     state: FSMContext,
 ):
-    if not await check_admin(callback):
+
+    if not await check_admin(
+        callback
+    ):
         return
 
-    dialog_id = get_id_from_callback(callback)
+    dialog_id = get_id_from_callback(
+        callback
+    )
 
     if dialog_id is None:
+
         await callback.answer(
             "❌ Некорректный ID.",
             show_alert=True,
         )
+
         return
 
-    dialog = get_dialog(dialog_id)
+    dialog = get_dialog(
+        dialog_id
+    )
 
     if dialog is None:
+
         await callback.answer(
             "❌ Диалог не найден.",
             show_alert=True,
         )
+
         return
 
-    assigned_admin = dialog["assigned_admin_id"]
+    assigned_admin = (
+        dialog["assigned_admin_id"]
+    )
 
     if (
         assigned_admin
         and assigned_admin != callback.from_user.id
     ):
+
         await callback.answer(
             "⛔ Диалог ведёт другой сотрудник.",
             show_alert=True,
         )
+
         return
 
-    close_dialog(dialog_id)
+    close_dialog(
+        dialog_id
+    )
 
     await state.clear()
 
     try:
+
         await callback.bot.send_message(
             dialog["user_id"],
             "💙 Диалог с поддержкой завершён.\n\n"
@@ -1195,11 +1460,14 @@ async def dialog_close_handler(
         )
 
     except Exception as error:
+
         print(
             f"CLOSE USER ERROR: {error}"
         )
 
-    await safe_remove_keyboard(callback)
+    await safe_remove_keyboard(
+        callback
+    )
 
     await callback.answer(
         "🔴 Диалог закрыт."
@@ -1222,7 +1490,11 @@ async def moderator_dialog_message(
     message: Message,
     state: FSMContext,
 ):
-    if not is_admin(message.from_user.id):
+
+    if not is_admin(
+        message.from_user.id
+    ):
+
         await state.clear()
 
         await message.answer(
@@ -1232,17 +1504,21 @@ async def moderator_dialog_message(
         return
 
     if not message.text:
+
         await message.answer(
             "❗ Отправьте текст."
         )
+
         return
 
     text = message.text.strip()
 
     if not text:
+
         await message.answer(
             "❗ Сообщение пустое."
         )
+
         return
 
     data = await state.get_data()
@@ -1252,6 +1528,7 @@ async def moderator_dialog_message(
     )
 
     if not dialog_id:
+
         await state.clear()
 
         await message.answer(
@@ -1261,12 +1538,15 @@ async def moderator_dialog_message(
 
         return
 
-    dialog = get_dialog(dialog_id)
+    dialog = get_dialog(
+        dialog_id
+    )
 
     if (
         dialog is None
         or dialog["status"] != "open"
     ):
+
         await state.clear()
 
         await message.answer(
@@ -1276,12 +1556,15 @@ async def moderator_dialog_message(
 
         return
 
-    assigned_admin = dialog["assigned_admin_id"]
+    assigned_admin = (
+        dialog["assigned_admin_id"]
+    )
 
     if (
         assigned_admin
         and assigned_admin != message.from_user.id
     ):
+
         await state.clear()
 
         await message.answer(
@@ -1304,6 +1587,7 @@ async def moderator_dialog_message(
     )
 
     try:
+
         await message.bot.send_message(
             dialog["user_id"],
             "💙 <b>Сообщение от сотрудника поддержки:</b>\n\n"
@@ -1316,6 +1600,7 @@ async def moderator_dialog_message(
         )
 
     except Exception as error:
+
         print(
             f"MODERATOR SEND ERROR: {error}"
         )
@@ -1335,12 +1620,14 @@ async def moderator_dialog_message(
 async def material_handler(
     callback: CallbackQuery,
 ):
+
     material_key = callback.data.split(
         ":",
         1,
     )[1]
 
     if material_key == "support":
+
         await callback.answer()
 
         await callback.message.answer(
@@ -1358,10 +1645,12 @@ async def material_handler(
     )
 
     if not material_text:
+
         await callback.answer(
             "❌ Материал не найден.",
             show_alert=True,
         )
+
         return
 
     await callback.answer()
