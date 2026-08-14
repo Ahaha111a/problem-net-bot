@@ -5,56 +5,6 @@ from aiogram.types import (
     InlineKeyboardButton,
 )
 
-from config import CHANNEL_ID
-
-
-# =========================================================
-# CHANNEL HELPERS
-# =========================================================
-
-def get_channel_message_url(message_id: int) -> str:
-    """
-    Создаёт ссылку на сообщение Telegram-канала.
-
-    Публичный канал:
-        @my_channel
-        https://t.me/my_channel/123
-
-    Приватный канал:
-        -1001234567890
-        https://t.me/c/1234567890/123
-    """
-
-    channel_id = str(CHANNEL_ID).strip()
-
-    if channel_id.startswith("-100"):
-        internal_id = channel_id[4:]
-        return (
-            f"https://t.me/c/"
-            f"{internal_id}/{message_id}"
-        )
-
-    if channel_id.startswith("@"):
-        username = channel_id[1:]
-        return (
-            f"https://t.me/"
-            f"{username}/{message_id}"
-        )
-
-    # Если указано имя канала без @
-    return (
-        f"https://t.me/"
-        f"{channel_id}/{message_id}"
-    )
-
-
-def get_channel_first_message_url() -> str:
-    """
-    Переход к первому сообщению канала.
-    """
-
-    return get_channel_message_url(1)
-
 
 # =========================================================
 # USER MENU
@@ -173,7 +123,6 @@ admin_keyboard = ReplyKeyboardMarkup(
 # =========================================================
 
 def support_method_keyboard():
-
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
@@ -184,13 +133,8 @@ def support_method_keyboard():
             ],
             [
                 InlineKeyboardButton(
-                    text=(
-                        "📞 Пусть со мной "
-                        "свяжется сотрудник"
-                    ),
-                    callback_data=(
-                        "support_method:personal"
-                    ),
+                    text="📞 Пусть со мной свяжется сотрудник",
+                    callback_data="support_method:personal",
                 ),
             ],
         ],
@@ -202,17 +146,12 @@ def support_method_keyboard():
 # =========================================================
 
 def personal_contact_keyboard():
-
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
                 InlineKeyboardButton(
-                    text=(
-                        "📞 Связаться со мной лично"
-                    ),
-                    callback_data=(
-                        "support_personal_request"
-                    ),
+                    text="📞 Связаться со мной лично",
+                    callback_data="support_personal_request",
                 ),
             ],
         ],
@@ -224,53 +163,12 @@ def personal_contact_keyboard():
 # =========================================================
 
 def material_actions_keyboard():
-
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
                 InlineKeyboardButton(
                     text="🆘 Нужна поддержка",
                     callback_data="material:support",
-                ),
-            ],
-        ],
-    )
-
-
-# =========================================================
-# STORIES — VIEW CHANNEL
-# =========================================================
-
-def view_stories_keyboard():
-
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(
-                    text="📖 Смотреть истории",
-                    url=get_channel_first_message_url(),
-                ),
-            ],
-        ],
-    )
-
-
-# =========================================================
-# STORIES — VIEW PUBLISHED STORY
-# =========================================================
-
-def view_published_story_keyboard(
-    message_id: int,
-):
-
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(
-                    text="👀 Посмотреть",
-                    url=get_channel_message_url(
-                        message_id
-                    ),
                 ),
             ],
         ],
@@ -285,37 +183,47 @@ def moderation_keyboard(
     story_id: int,
     user_id: int,
 ):
-
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
                 InlineKeyboardButton(
                     text="✏️ Изменить",
-                    callback_data=(
-                        f"edit:{story_id}"
-                    ),
+                    callback_data=f"edit:{story_id}",
                 ),
                 InlineKeyboardButton(
                     text="✅ Опубликовать",
-                    callback_data=(
-                        f"publish:{story_id}"
-                    ),
+                    callback_data=f"publish:{story_id}",
                 ),
             ],
             [
                 InlineKeyboardButton(
                     text="❌ Отклонить",
-                    callback_data=(
-                        f"reject:{story_id}"
-                    ),
+                    callback_data=f"reject:{story_id}",
                 ),
             ],
             [
                 InlineKeyboardButton(
                     text="👤 Написать пользователю",
-                    callback_data=(
-                        f"contact:{story_id}"
-                    ),
+                    callback_data=f"contact:{story_id}",
+                ),
+            ],
+        ],
+    )
+
+
+# =========================================================
+# PUBLICATION — VIEW BUTTON
+# =========================================================
+
+def published_story_keyboard(
+    message_link: str,
+):
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="👀 Посмотреть",
+                    url=message_link,
                 ),
             ],
         ],
@@ -329,23 +237,18 @@ def moderation_keyboard(
 def support_new_message_keyboard(
     dialog_id: int,
 ):
-
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
                 InlineKeyboardButton(
                     text="💬 Открыть диалог",
-                    callback_data=(
-                        f"dialog_open:{dialog_id}"
-                    ),
+                    callback_data=f"dialog_open:{dialog_id}",
                 ),
             ],
             [
                 InlineKeyboardButton(
                     text="📞 Связаться лично",
-                    callback_data=(
-                        f"dialog_personal:{dialog_id}"
-                    ),
+                    callback_data=f"dialog_personal:{dialog_id}",
                 ),
             ],
         ],
@@ -359,39 +262,30 @@ def support_new_message_keyboard(
 def support_dialog_keyboard(
     dialog_id: int,
 ):
-
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
                 InlineKeyboardButton(
                     text="📞 Связаться лично",
-                    callback_data=(
-                        f"dialog_personal:{dialog_id}"
-                    ),
+                    callback_data=f"dialog_personal:{dialog_id}",
                 ),
             ],
             [
                 InlineKeyboardButton(
                     text="🟠 Ожидает пользователя",
-                    callback_data=(
-                        f"dialog_waiting:{dialog_id}"
-                    ),
+                    callback_data=f"dialog_waiting:{dialog_id}",
                 ),
             ],
             [
                 InlineKeyboardButton(
                     text="⬅️ Выйти из диалога",
-                    callback_data=(
-                        f"dialog_exit:{dialog_id}"
-                    ),
+                    callback_data=f"dialog_exit:{dialog_id}",
                 ),
             ],
             [
                 InlineKeyboardButton(
                     text="🔴 Закрыть диалог",
-                    callback_data=(
-                        f"dialog_close:{dialog_id}"
-                    ),
+                    callback_data=f"dialog_close:{dialog_id}",
                 ),
             ],
         ],
@@ -406,24 +300,18 @@ def personal_request_keyboard(
     dialog_id: int,
     user_id: int,
 ):
-
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
                 InlineKeyboardButton(
-                    text=(
-                        "👤 Открыть профиль "
-                        "пользователя"
-                    ),
+                    text="👤 Открыть профиль пользователя",
                     url=f"tg://user?id={user_id}",
                 ),
             ],
             [
                 InlineKeyboardButton(
                     text="💬 Открыть диалог",
-                    callback_data=(
-                        f"dialog_open:{dialog_id}"
-                    ),
+                    callback_data=f"dialog_open:{dialog_id}",
                 ),
             ],
         ],
