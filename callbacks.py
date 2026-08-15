@@ -25,6 +25,9 @@ from database import (
     set_admin_control_message,
     get_admin_control_message,
     clear_admin_control_message,
+    log_admin_action,
+    save_support_feedback,
+    detect_dialog_priority,
 )
 from states import StoryState
 from ai import analyze_story
@@ -36,6 +39,7 @@ from keyboards import (
     admin_keyboard,
     moderation_keyboard,
     published_story_keyboard,
+    support_feedback_keyboard,
 )
 
 callback_router = Router()
@@ -150,11 +154,14 @@ def dialog_card_text(dialog_id: int) -> str:
     }
     status = dialog["support_status"] or "new"
     messages = get_dialog_messages(dialog_id)
+    priority = dialog["priority"] or 1
+    priority_name = {1: "🟢 Обычный", 2: "🟠 Повышенный", 3: "🔴 Срочный"}.get(priority, "🟢 Обычный")
 
     text = (
         f"💬 <b>Диалог #{dialog_id}</b>\n\n"
         f"👤 User ID: <code>{dialog['user_id']}</code>\n"
         f"📌 Статус: {status_names.get(status, status)}\n"
+        f"🔥 Приоритет: {priority_name}\n"
         f"👨‍💼 Сотрудник: <code>{dialog['assigned_admin_id'] or 'не назначен'}</code>\n\n"
         "━━━━━━━━━━━━━━\n\n"
     )
@@ -325,6 +332,7 @@ async def publish_handler(callback: CallbackQuery):
                 parse_mode="HTML",
             )
         await refresh_story_card(callback.message, story_id)
+        log_admin_action(callback.from_user.id, "publish", "story", story_id)
         await callback.answer("✅ История опубликована.")
     except Exception as error:
         print(f"PUBLISH ERROR: {error}")
@@ -398,6 +406,7 @@ async def save_reject(message: Message, state: FSMContext):
         await message.answer("❌ История не найдена.", reply_markup=admin_keyboard)
         return
     reject_story(story_id, reason)
+    log_admin_action(message.from_user.id, "reject", "story", story_id, reason)
     try:
         await message.bot.send_message(
             story["user_id"],
@@ -452,11 +461,33 @@ async def ai_retry_handler(callback: CallbackQuery):
     try:
         result = await analyze_story(story["text"])
         update_ai_result(story_id, result)
+        log_admin_action(callback.from_user.id, "ai_retry", "story", story_id)
         await refresh_story_card(callback.message, story_id)
         await callback.answer("✅ ИИ-анализ обновлён.")
     except Exception as error:
         print(f"AI RETRY ERROR: {error}")
         await callback.answer("❌ Не удалось получить анализ ИИ.", show_alert=True)
+
+
+@callback_router.callback_query(F.data.startswith("post_retry:"))
+async def post_retry_handler(callback: CallbackQuery):
+    if not await check_admin(callback):
+        return
+    story_id = get_id_from_callback(callback)
+    story = get_story(story_id) if story_id else None
+    if not story:
+        await callback.answer("❌ История не найдена.", show_alert=True)
+        return
+    await callback.answer("📝 Генерирую новый вариант поста…")
+    try:
+        post_text = await create_post(story["text"])
+        update_post(story_id, post_text)
+        log_admin_action(callback.from_user.id, "post_retry", "story", story_id)
+        await refresh_story_card(callback.message, story_id)
+        await callback.answer("✅ Новый вариант поста готов.")
+    except Exception as error:
+        print(f"POST RETRY ERROR: {error}")
+        await callback.answer("❌ Не удалось сгенерировать новый пост.", show_alert=True)
 
 
 @callback_router.callback_query(F.data.startswith("edit:"))
@@ -525,6 +556,7 @@ async def save_edited_post(message: Message, state: FSMContext):
         await message.answer("❌ История не найдена.", reply_markup=admin_keyboard)
         return
     update_post(story_id, text)
+    log_admin_action(message.from_user.id, "edit_post", "story", story_id)
     if chat_id and msg_id:
         try:
             updated = get_story(story_id)
@@ -642,6 +674,28 @@ async def send_contact_message(message: Message, state: FSMContext):
 # SUPPORT
 # =========================================================
 
+@callback_router.callback_query(F.data.startswith("dialog_claim:"))
+async def dialog_claim_handler(callback: CallbackQuery):
+    if not await check_admin(callback):
+        return
+    dialog_id = get_id_from_callback(callback)
+    dialog = get_dialog(dialog_id) if dialog_id else None
+    if not dialog:
+        await callback.answer("❌ Диалог не найден.", show_alert=True)
+        return
+    if dialog["status"] != "open":
+        await callback.answer("ℹ️ Диалог уже закрыт.", show_alert=True)
+        return
+    if dialog["assigned_admin_id"] and dialog["assigned_admin_id"] != callback.from_user.id:
+        await callback.answer("⛔ Диалог уже взят другим сотрудником.", show_alert=True)
+        return
+    assign_dialog(dialog_id, callback.from_user.id)
+    set_dialog_status(dialog_id, "in_progress")
+    log_admin_action(callback.from_user.id, "claim_dialog", "dialog", dialog_id)
+    await refresh_dialog_card(callback.bot, dialog_id, callback.message.chat.id, callback.message.message_id)
+    await callback.answer("👨‍💼 Диалог взят в работу.")
+
+
 @callback_router.callback_query(F.data.startswith("dialog_open:"))
 async def dialog_open_handler(callback: CallbackQuery, state: FSMContext):
     if not await check_admin(callback):
@@ -662,6 +716,7 @@ async def dialog_open_handler(callback: CallbackQuery, state: FSMContext):
     mark_dialog_read_by_admin(dialog_id)
     assign_dialog(dialog_id, admin_id)
     set_dialog_status(dialog_id, "in_progress")
+    log_admin_action(admin_id, "open_dialog", "dialog", dialog_id)
     await state.clear()
     await state.update_data(moderator_dialog_id=dialog_id)
     await state.set_state(StoryState.moderator_dialog)
@@ -721,6 +776,7 @@ async def dialog_waiting_handler(callback: CallbackQuery):
     if not dialog:
         return
     set_dialog_status(dialog_id, "waiting_user")
+    log_admin_action(callback.from_user.id, "dialog_waiting", "dialog", dialog_id)
     try:
         await callback.bot.send_message(
             dialog["user_id"],
@@ -741,6 +797,7 @@ async def dialog_resolved_handler(callback: CallbackQuery):
     if not dialog:
         return
     set_dialog_status(dialog_id, "resolved")
+    log_admin_action(callback.from_user.id, "dialog_resolved", "dialog", dialog_id)
     try:
         await callback.bot.send_message(dialog["user_id"], "🟢 Сотрудник поддержки отметил вопрос как решённый. Если понадобится помощь снова — напишите нам.")
     except Exception as error:
@@ -759,6 +816,7 @@ async def dialog_exit_handler(callback: CallbackQuery, state: FSMContext):
         return
     unassign_dialog(dialog_id)
     set_dialog_status(dialog_id, "new")
+    log_admin_action(callback.from_user.id, "dialog_exit", "dialog", dialog_id)
     await state.clear()
     await callback.answer("↩️ Вы вышли из диалога.")
     try:
@@ -796,11 +854,16 @@ async def dialog_close_handler(callback: CallbackQuery, state: FSMContext):
         return
     close_dialog(dialog_id)
     clear_admin_control_message(dialog_id)
+    log_admin_action(callback.from_user.id, "dialog_close", "dialog", dialog_id)
     await state.clear()
     try:
         await callback.bot.send_message(
             dialog["user_id"],
-            "💙 Диалог с поддержкой завершён.\n\nЕсли вам снова понадобится помощь, используйте «🆘 Экстренная поддержка»."
+            "💙 <b>Диалог с поддержкой завершён.</b>\n\n"
+            "Если вам снова понадобится помощь, используйте «🆘 Экстренная поддержка».\n\n"
+            "⭐ Оцените, пожалуйста, помощь сотрудника:",
+            parse_mode="HTML",
+            reply_markup=support_feedback_keyboard(dialog_id),
         )
     except Exception as error:
         print(f"CLOSE USER ERROR: {error}")
@@ -850,6 +913,28 @@ async def moderator_dialog_message(message: Message, state: FSMContext):
     except Exception as error:
         print(f"MODERATOR SEND ERROR: {error}")
         await message.answer("❌ Не удалось отправить сообщение.")
+
+
+# =========================================================
+# SUPPORT FEEDBACK
+# =========================================================
+
+@callback_router.callback_query(F.data.startswith("feedback:"))
+async def feedback_handler(callback: CallbackQuery):
+    try:
+        _, dialog_id_raw, rating_raw = callback.data.split(":", 2)
+        dialog_id = int(dialog_id_raw)
+        rating = int(rating_raw)
+    except (ValueError, AttributeError):
+        await callback.answer("❌ Некорректная оценка.", show_alert=True)
+        return
+    dialog = get_dialog(dialog_id)
+    if not dialog or dialog["user_id"] != callback.from_user.id:
+        await callback.answer("⛔ Оценка недоступна.", show_alert=True)
+        return
+    save_support_feedback(dialog_id, callback.from_user.id, rating)
+    await callback.message.edit_reply_markup(reply_markup=None)
+    await callback.answer("Спасибо за оценку! 💙")
 
 
 # =========================================================
