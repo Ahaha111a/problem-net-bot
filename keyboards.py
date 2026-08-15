@@ -34,6 +34,7 @@ admin_keyboard = ReplyKeyboardMarkup(
         [KeyboardButton(text="⏳ Модерация"), KeyboardButton(text="📊 Статистика")],
         [KeyboardButton(text="💬 Диалоги")],
         [KeyboardButton(text="📁 Все истории")],
+        [KeyboardButton(text="📜 Журнал действий")],
         [KeyboardButton(text="👤 Режим пользователя")],
         [KeyboardButton(text="⬅️ Назад")],
     ],
@@ -65,6 +66,7 @@ def moderation_keyboard(story_id: int, user_id: int):
         [
             InlineKeyboardButton(text="✏️ Изменить", callback_data=f"edit:{story_id}"),
             InlineKeyboardButton(text="🔄 Повторить ИИ", callback_data=f"ai_retry:{story_id}"),
+            InlineKeyboardButton(text="📝 Новый пост", callback_data=f"post_retry:{story_id}"),
         ],
         [
             InlineKeyboardButton(text="👀 Предпросмотр", callback_data=f"preview:{story_id}"),
@@ -81,11 +83,13 @@ def published_story_keyboard(message_link: str):
     ])
 
 
-def support_new_message_keyboard(dialog_id: int):
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="💬 Открыть диалог", callback_data=f"dialog_open:{dialog_id}")],
-        [InlineKeyboardButton(text="📞 Связаться лично", callback_data=f"dialog_personal:{dialog_id}")],
-    ])
+def support_new_message_keyboard(dialog_id: int, unassigned: bool = True):
+    rows = []
+    if unassigned:
+        rows.append([InlineKeyboardButton(text="👨‍💼 Взять диалог", callback_data=f"dialog_claim:{dialog_id}")])
+    rows.append([InlineKeyboardButton(text="💬 Открыть диалог", callback_data=f"dialog_open:{dialog_id}")])
+    rows.append([InlineKeyboardButton(text="📞 Связаться лично", callback_data=f"dialog_personal:{dialog_id}")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def support_dialog_keyboard(dialog_id: int):
@@ -95,6 +99,16 @@ def support_dialog_keyboard(dialog_id: int):
         [InlineKeyboardButton(text="🟢 Решён", callback_data=f"dialog_resolved:{dialog_id}")],
         [InlineKeyboardButton(text="⬅️ Выйти из диалога", callback_data=f"dialog_exit:{dialog_id}")],
         [InlineKeyboardButton(text="🔴 Закрыть диалог", callback_data=f"dialog_close:{dialog_id}")],
+    ])
+
+
+def support_feedback_keyboard(dialog_id: int):
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="⭐ 1", callback_data=f"feedback:{dialog_id}:1"),
+         InlineKeyboardButton(text="⭐ 2", callback_data=f"feedback:{dialog_id}:2"),
+         InlineKeyboardButton(text="⭐ 3", callback_data=f"feedback:{dialog_id}:3"),
+         InlineKeyboardButton(text="⭐ 4", callback_data=f"feedback:{dialog_id}:4"),
+         InlineKeyboardButton(text="⭐ 5", callback_data=f"feedback:{dialog_id}:5")],
     ])
 
 
