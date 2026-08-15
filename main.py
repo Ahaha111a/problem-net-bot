@@ -330,14 +330,16 @@ async def main():
     # Dispatcher
     dp = Dispatcher()
 
-    # Сначала callback-router
-    dp.include_router(
-        callback_router
-    )
-
-    # Затем основной router
+    # Сначала основной router.
+    # Это важно: кнопки меню должны обрабатываться раньше
+    # state-handler'ов из callbacks.py.
     dp.include_router(
         router
+    )
+
+    # Callback-router после основного router.
+    dp.include_router(
+        callback_router
     )
 
     print(
