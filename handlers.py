@@ -25,10 +25,15 @@ from database import (
     add_support_message,
     get_open_dialogs,
     set_dialog_status,
+    register_user,
+    get_extended_stats,
+    get_admin_control_message,
 )
 
 from ai import analyze_story
 from post_generator import create_post
+
+from callbacks import refresh_dialog_card
 
 from keyboards import (
     main_keyboard,
@@ -197,6 +202,7 @@ async def start_command(
     state: FSMContext,
 ):
     await state.clear()
+    register_user(message.from_user.id)
 
     if is_admin(message.from_user.id):
         await message.answer(
@@ -307,7 +313,7 @@ async def switch_to_admin_mode(
 
     await state.clear()
 
-    stats = get_stats()
+    stats = get_extended_stats()
 
     await message.answer(
         "👨‍💼 <b>Панель администратора</b>\n\n"
@@ -473,31 +479,39 @@ async def notify_admins_about_message(
     dialog_id: int,
     text: str,
 ):
+    dialog = get_open_dialog_by_user(message.from_user.id)
+    assigned_admin = dialog["assigned_admin_id"] if dialog else None
+
+    # Если диалог уже взят конкретным сотрудником,
+    # обновляем его существующую карточку. Так кнопки всегда
+    # находятся вместе с актуальным состоянием диалога.
+    if assigned_admin:
+        try:
+            await refresh_dialog_card(message.bot, dialog_id)
+            return
+        except Exception as error:
+            print(f"ACTIVE DIALOG REFRESH ERROR: {error}")
+
     admin_text = (
         "💬 <b>Новое сообщение в диалоге</b>\n\n"
         f"Диалог #{dialog_id}\n"
-        f"👤 User ID: "
-        f"<code>{message.from_user.id}</code>\n\n"
+        f"👤 User ID: <code>{message.from_user.id}</code>\n\n"
         f"{escape(text)}"
     )
 
     for admin_id in ADMIN_IDS:
         try:
-            await message.bot.send_message(
+            sent = await message.bot.send_message(
                 admin_id,
                 admin_text,
-                reply_markup=(
-                    support_new_message_keyboard(
-                        dialog_id
-                    )
-                ),
+                reply_markup=support_new_message_keyboard(dialog_id),
                 parse_mode="HTML",
             )
-
+            # Запоминаем последнее управляющее сообщение.
+            from database import set_admin_control_message
+            set_admin_control_message(dialog_id, admin_id, sent.message_id)
         except Exception as error:
-            print(
-                f"DIALOG ADMIN ERROR: {error}"
-            )
+            print(f"DIALOG ADMIN ERROR ({admin_id}): {error}")
 
 
 # =========================================================
@@ -747,6 +761,13 @@ async def dialogs_menu(
             dialog["unread_admin"] or 0
         )
 
+        status_names = {
+            "new": "🔴 Новый",
+            "in_progress": "🟡 В работе",
+            "waiting_user": "🟠 Ожидает пользователя",
+            "resolved": "🟢 Решён",
+        }
+        support_status = dialog["support_status"] or "new"
         text = (
             f"💬 <b>Диалог #{dialog['id']}</b>\n\n"
             f"👤 User ID: "
@@ -781,19 +802,13 @@ async def dialogs_menu(
 # =========================================================
 
 @router.message(F.text == "⏳ Модерация")
-async def moderation(
-    message: Message,
-):
+async def moderation(message: Message):
     if not is_admin(message.from_user.id):
         return
 
     stories = get_waiting_stories()
-
     if not stories:
-        await message.answer(
-            "🟢 На модерации сейчас ничего нет.",
-            reply_markup=admin_keyboard,
-        )
+        await message.answer("🟢 На модерации сейчас ничего нет.", reply_markup=admin_keyboard)
         return
 
     await message.answer(
@@ -801,19 +816,12 @@ async def moderation(
         parse_mode="HTML",
     )
 
+    from callbacks import story_card_text
     for story in stories[:20]:
-        post_text = story["post_text"] or "⚠️ Пост ещё не сгенерирован."
         await message.answer(
-            f"📥 <b>История #{story['id']}</b>\n\n"
-            f"👤 User ID: <code>{story['user_id']}</code>\n\n"
-            f"💭 <b>Текст:</b>\n\n{escape(story['text'])}\n\n"
-            "━━━━━━━━━━━━━━\n\n"
-            f"📌 <b>Готовый пост:</b>\n\n{escape(post_text)}",
+            story_card_text(story),
             parse_mode="HTML",
-            reply_markup=moderation_keyboard(
-                story["id"],
-                story["user_id"],
-            ),
+            reply_markup=moderation_keyboard(story["id"], story["user_id"]),
         )
 
 
@@ -822,20 +830,26 @@ async def moderation(
 # =========================================================
 
 @router.message(F.text == "📊 Статистика")
-async def statistics(
-    message: Message,
-):
+async def statistics(message: Message):
     if not is_admin(message.from_user.id):
         return
 
-    stats = get_stats()
+    stats = get_extended_stats()
+    support = stats["support"]
 
     await message.answer(
-        "📊 <b>Статистика</b>\n\n"
-        f"📚 Всего историй: {stats['total']}\n\n"
+        "📊 <b>Расширенная статистика</b>\n\n"
+        f"👥 Пользователей: {stats['users']}\n"
+        f"📚 Всего историй: {stats['total']}\n"
         f"⏳ На модерации: {stats['waiting']}\n"
         f"✅ Опубликовано: {stats['published']}\n"
-        f"❌ Отклонено: {stats['rejected']}",
+        f"❌ Отклонено: {stats['rejected']}\n"
+        f"\n📅 Опубликовано сегодня: {stats['published_today']}\n"
+        f"📅 Отклонено сегодня: {stats['rejected_today']}\n"
+        f"\n💬 Открытых диалогов: {support['open']}\n"
+        f"🔴 Новых диалогов: {support['new']}\n"
+        f"🟡 В работе: {support['in_progress']}\n"
+        f"💬 Среднее сообщений в диалоге: {stats['avg_dialog_messages']}",
         parse_mode="HTML",
         reply_markup=admin_keyboard,
     )
