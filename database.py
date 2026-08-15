@@ -165,6 +165,20 @@ def init_db():
                     """
                 )
 
+    # Регистрируем пользователей, которые появились до введения таблицы users.
+    connection.execute(
+        """
+        INSERT OR IGNORE INTO users (user_id, notification_date, notification_minute)
+        SELECT DISTINCT user_id, NULL, NULL FROM stories
+        """
+    )
+    connection.execute(
+        """
+        INSERT OR IGNORE INTO users (user_id, notification_date, notification_minute)
+        SELECT DISTINCT user_id, NULL, NULL FROM support_dialogs
+        """
+    )
+
     connection.commit()
 
     connection.close()
@@ -295,11 +309,12 @@ def get_due_notification_users(
         """
         SELECT user_id
         FROM users
-        WHERE notification_date <= ?
-          AND notification_minute <= ?
+        WHERE notification_date < ?
+           OR (notification_date = ? AND notification_minute <= ?)
         ORDER BY user_id
         """,
         (
+            date_iso,
             date_iso,
             current_minute,
         ),
@@ -346,6 +361,35 @@ def mark_notification_sent(
 
     connection.close()
 
+
+
+def get_user_count():
+    connection = get_connection()
+    row = connection.execute("SELECT COUNT(*) AS count FROM users").fetchone()
+    connection.close()
+    return row["count"] if row else 0
+
+
+def get_support_stats():
+    connection = get_connection()
+    open_count = connection.execute(
+        "SELECT COUNT(*) AS count FROM support_dialogs WHERE status = 'open'"
+    ).fetchone()["count"]
+    new_count = connection.execute(
+        "SELECT COUNT(*) AS count FROM support_dialogs WHERE status = 'open' AND support_status = 'new'"
+    ).fetchone()["count"]
+    in_progress = connection.execute(
+        "SELECT COUNT(*) AS count FROM support_dialogs WHERE status = 'open' AND support_status = 'in_progress'"
+    ).fetchone()["count"]
+    connection.close()
+    return {"open": open_count, "new": new_count, "in_progress": in_progress}
+
+
+def get_extended_stats():
+    stats = get_stats()
+    stats["users"] = get_user_count()
+    stats["support"] = get_support_stats()
+    return stats
 
 # =========================================================
 # STORIES
