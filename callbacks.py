@@ -94,6 +94,66 @@ async def safe_remove_keyboard(
         pass
 
 
+# =========================================================
+# ADMIN MENU PRIORITY HANDLER
+# =========================================================
+# callbacks.py содержит state-хендлеры поддержки/редактирования.
+# Этот роутер подключается раньше handlers.py, поэтому сообщение
+# с кнопки админ-меню могло попадать в общий state-хендлер и
+# не доходить до обычного обработчика админ-панели.
+#
+# Здесь меню администратора имеет приоритет над любым FSM state.
+
+ADMIN_MENU_BUTTONS = {
+    "👨‍💼 Админ-панель",
+    "👤 Режим пользователя",
+    "⏳ Модерация",
+    "📊 Статистика",
+    "💬 Диалоги",
+    "📁 Все истории",
+    "⬅️ Назад",
+}
+
+
+@callback_router.message(
+    F.from_user.id.in_(ADMIN_IDS),
+    F.text.in_(ADMIN_MENU_BUTTONS),
+)
+async def admin_menu_priority_handler(
+    message: Message,
+    state: FSMContext,
+):
+    # ВАЖНО: сначала сбрасываем любое состояние.
+    await state.clear()
+
+    # Импорт внутри функции исключает циклический импорт:
+    # handlers.py уже загружен main.py до регистрации callbacks.py.
+    from handlers import (
+        switch_to_admin_mode,
+        switch_to_user_mode,
+        moderation,
+        statistics,
+        dialogs_menu,
+        all_stories,
+        back,
+    )
+
+    handlers = {
+        "👨‍💼 Админ-панель": switch_to_admin_mode,
+        "👤 Режим пользователя": switch_to_user_mode,
+        "⏳ Модерация": moderation,
+        "📊 Статистика": statistics,
+        "💬 Диалоги": dialogs_menu,
+        "📁 Все истории": all_stories,
+        "⬅️ Назад": back,
+    }
+
+    handler = handlers.get(message.text)
+
+    if handler is not None:
+        await handler(message, state)
+
+
 async def get_channel_message_link(
     bot,
     message_id: int,
