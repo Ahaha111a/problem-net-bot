@@ -645,30 +645,28 @@ async def receive_story(
     StateFilter(None),
     F.chat.type == "private",
     F.text,
+    ~F.text.in_(
+        {
+            "📝 Поделиться историей",
+            "💡 Совет дня",
+            "📚 Полезные материалы",
+            "🆘 Экстренная поддержка",
+            "📖 Смотреть истории",
+            "⬅️ Назад",
+            "👨‍💼 Админ-панель",
+            "👤 Режим пользователя",
+            "⏳ Модерация",
+            "📊 Статистика",
+            "💬 Диалоги",
+            "📁 Все истории",
+        }
+    ),
 )
 async def active_support_message(
     message: Message,
     state: FSMContext,
 ):
     if is_admin(message.from_user.id):
-        return
-
-    menu_buttons = {
-        "📝 Поделиться историей",
-        "💡 Совет дня",
-        "📚 Полезные материалы",
-        "🆘 Экстренная поддержка",
-        "📖 Смотреть истории",
-        "⬅️ Назад",
-        "👨‍💼 Админ-панель",
-        "👤 Режим пользователя",
-        "⏳ Модерация",
-        "📊 Статистика",
-        "💬 Диалоги",
-        "📁 Все истории",
-    }
-
-    if message.text in menu_buttons:
         return
 
     dialog = get_open_dialog_by_user(
