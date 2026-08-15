@@ -802,12 +802,13 @@ async def moderation(
     )
 
     for story in stories[:20]:
-
+        post_text = story["post_text"] or "⚠️ Пост ещё не сгенерирован."
         await message.answer(
             f"📥 <b>История #{story['id']}</b>\n\n"
-            f"👤 User ID: "
-            f"<code>{story['user_id']}</code>\n\n"
-            f"{escape(story['text'])}",
+            f"👤 User ID: <code>{story['user_id']}</code>\n\n"
+            f"💭 <b>Текст:</b>\n\n{escape(story['text'])}\n\n"
+            "━━━━━━━━━━━━━━\n\n"
+            f"📌 <b>Готовый пост:</b>\n\n{escape(post_text)}",
             parse_mode="HTML",
             reply_markup=moderation_keyboard(
                 story["id"],
