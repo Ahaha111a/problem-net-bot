@@ -34,7 +34,9 @@ admin_keyboard = ReplyKeyboardMarkup(
         [KeyboardButton(text="⏳ Модерация"), KeyboardButton(text="📊 Статистика")],
         [KeyboardButton(text="💬 Диалоги")],
         [KeyboardButton(text="📁 Все истории")],
-        [KeyboardButton(text="📜 Журнал действий")],
+        [KeyboardButton(text="📚 Публикации"), KeyboardButton(text="⭐ Избранное")],
+        [KeyboardButton(text="👥 Пользователи")],
+        [KeyboardButton(text="🔎 Поиск"), KeyboardButton(text="📈 Аналитика")],
         [KeyboardButton(text="👤 Режим пользователя")],
         [KeyboardButton(text="⬅️ Назад")],
     ],
@@ -66,14 +68,28 @@ def moderation_keyboard(story_id: int, user_id: int):
         [
             InlineKeyboardButton(text="✏️ Изменить", callback_data=f"edit:{story_id}"),
             InlineKeyboardButton(text="🔄 Повторить ИИ", callback_data=f"ai_retry:{story_id}"),
-            InlineKeyboardButton(text="📝 Новый пост", callback_data=f"post_retry:{story_id}"),
         ],
         [
             InlineKeyboardButton(text="👀 Предпросмотр", callback_data=f"preview:{story_id}"),
+            InlineKeyboardButton(text="⭐ Избранное", callback_data=f"favorite:{story_id}"),
+        ],
+        [InlineKeyboardButton(text="🤖 Проверка ИИ", callback_data=f"ai_review:{story_id}"),
             InlineKeyboardButton(text="✅ Опубликовать", callback_data=f"publish:{story_id}"),
         ],
         [InlineKeyboardButton(text="❌ Отклонить", callback_data=f"reject:{story_id}")],
         [InlineKeyboardButton(text="👤 Написать пользователю", callback_data=f"contact:{story_id}")],
+    ])
+
+
+def moderation_cancel_keyboard(action: str, story_id: int):
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="❌ Отмена", callback_data=f"{action}_cancel:{story_id}")]
+    ])
+
+
+def user_profile_keyboard(user_id: int):
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="💬 Открыть диалог", callback_data=f"user_dialog:{user_id}")],
     ])
 
 
@@ -83,17 +99,16 @@ def published_story_keyboard(message_link: str):
     ])
 
 
-def support_new_message_keyboard(dialog_id: int, unassigned: bool = True):
-    rows = []
-    if unassigned:
-        rows.append([InlineKeyboardButton(text="👨‍💼 Взять диалог", callback_data=f"dialog_claim:{dialog_id}")])
-    rows.append([InlineKeyboardButton(text="💬 Открыть диалог", callback_data=f"dialog_open:{dialog_id}")])
-    rows.append([InlineKeyboardButton(text="📞 Связаться лично", callback_data=f"dialog_personal:{dialog_id}")])
-    return InlineKeyboardMarkup(inline_keyboard=rows)
+def support_new_message_keyboard(dialog_id: int):
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="💬 Открыть диалог", callback_data=f"dialog_open:{dialog_id}")],
+        [InlineKeyboardButton(text="📞 Связаться лично", callback_data=f"dialog_personal:{dialog_id}")],
+    ])
 
 
 def support_dialog_keyboard(dialog_id: int):
     return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="👤 Профиль пользователя", callback_data=f"dialog_user:{dialog_id}")],
         [InlineKeyboardButton(text="📞 Связаться лично", callback_data=f"dialog_personal:{dialog_id}")],
         [InlineKeyboardButton(text="🟠 Ожидает пользователя", callback_data=f"dialog_waiting:{dialog_id}")],
         [InlineKeyboardButton(text="🟢 Решён", callback_data=f"dialog_resolved:{dialog_id}")],
@@ -102,18 +117,14 @@ def support_dialog_keyboard(dialog_id: int):
     ])
 
 
-def support_feedback_keyboard(dialog_id: int):
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="⭐ 1", callback_data=f"feedback:{dialog_id}:1"),
-         InlineKeyboardButton(text="⭐ 2", callback_data=f"feedback:{dialog_id}:2"),
-         InlineKeyboardButton(text="⭐ 3", callback_data=f"feedback:{dialog_id}:3"),
-         InlineKeyboardButton(text="⭐ 4", callback_data=f"feedback:{dialog_id}:4"),
-         InlineKeyboardButton(text="⭐ 5", callback_data=f"feedback:{dialog_id}:5")],
-    ])
-
-
 def personal_request_keyboard(dialog_id: int, user_id: int):
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="👤 Открыть профиль пользователя", url=f"tg://user?id={user_id}")],
         [InlineKeyboardButton(text="💬 Открыть диалог", callback_data=f"dialog_open:{dialog_id}")],
+    ])
+
+
+def emergency_support_keyboard():
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🆘 Экстренная поддержка", callback_data="open_emergency_support")]
     ])
