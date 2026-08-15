@@ -28,9 +28,11 @@ from database import (
     register_user,
     get_extended_stats,
     get_admin_control_message,
-    detect_dialog_priority,
-    log_admin_action,
-    get_audit_logs,
+    get_published_stories,
+    get_user_summary,
+    search_stories,
+    get_analytics,
+    get_favorite_stories,
 )
 
 from ai import analyze_story
@@ -392,6 +394,7 @@ async def emergency_support(
     message: Message,
     state: FSMContext,
 ):
+    register_user(message.from_user.id)
     await state.clear()
 
     await state.set_state(
@@ -421,6 +424,7 @@ async def receive_support_message(
     message: Message,
     state: FSMContext,
 ):
+    register_user(message.from_user.id)
     if not message.text:
         await message.answer(
             "❗ Отправьте текстовое сообщение."
@@ -507,7 +511,7 @@ async def notify_admins_about_message(
             sent = await message.bot.send_message(
                 admin_id,
                 admin_text,
-                reply_markup=support_new_message_keyboard(dialog_id, unassigned=(dialog["assigned_admin_id"] is None)),
+                reply_markup=support_new_message_keyboard(dialog_id),
                 parse_mode="HTML",
             )
             # Запоминаем последнее управляющее сообщение.
@@ -526,6 +530,7 @@ async def start_story(
     message: Message,
     state: FSMContext,
 ):
+    register_user(message.from_user.id)
     await state.clear()
 
     await state.set_state(
@@ -676,7 +681,11 @@ async def receive_story(
             "📊 Статистика",
             "💬 Диалоги",
             "📁 Все истории",
-            "📜 Журнал действий",
+            "📚 Публикации",
+            "👥 Пользователи",
+            "⭐ Избранное",
+            "🔎 Поиск",
+            "📈 Аналитика",
         }
     ),
 )
@@ -772,21 +781,26 @@ async def dialogs_menu(
             "resolved": "🟢 Решён",
         }
         support_status = dialog["support_status"] or "new"
-        priority = dialog["priority"] or 1
-        priority_name = {1: "🟢 Обычный", 2: "🟠 Повышенный", 3: "🔴 Срочный"}.get(priority, "🟢 Обычный")
         text = (
             f"💬 <b>Диалог #{dialog['id']}</b>\n\n"
             f"👤 User ID: "
-            f"<code>{dialog['user_id']}</code>\n"
-            f"📌 Приоритет: {priority_name}\n\n"
+            f"<code>{dialog['user_id']}</code>\n\n"
             f"{'🔴 Новых сообщений: ' + str(unread) if unread else '🟢 Нет новых сообщений'}\n\n"
             f"Последнее сообщение:\n"
             f"{escape(last_message)}"
         )
 
-        keyboard = support_new_message_keyboard(
-            dialog["id"],
-            unassigned=(dialog["assigned_admin_id"] is None),
+        keyboard = InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    InlineKeyboardButton(
+                        text="💬 Открыть",
+                        callback_data=(
+                            f"dialog_open:{dialog['id']}"
+                        ),
+                    ),
+                ],
+            ],
         )
 
         await message.answer(
@@ -848,44 +862,10 @@ async def statistics(message: Message):
         f"\n💬 Открытых диалогов: {support['open']}\n"
         f"🔴 Новых диалогов: {support['new']}\n"
         f"🟡 В работе: {support['in_progress']}\n"
-        f"💬 Среднее сообщений в диалоге: {stats['avg_dialog_messages']}\n"
-        f"⭐ Оценок поддержки: {stats['feedback']['count']}\n"
-        f"⭐ Средняя оценка: {stats['feedback']['avg_rating']}",
+        f"💬 Среднее сообщений в диалоге: {stats['avg_dialog_messages']}",
         parse_mode="HTML",
         reply_markup=admin_keyboard,
     )
-
-
-# =========================================================
-# ADMIN — AUDIT LOG
-# =========================================================
-
-@router.message(F.text == "📜 Журнал действий")
-async def audit_log(message: Message):
-    if not is_admin(message.from_user.id):
-        return
-
-    logs = get_audit_logs(50)
-    if not logs:
-        await message.answer("📜 Журнал пока пуст.", reply_markup=admin_keyboard)
-        return
-
-    lines = ["📜 <b>Последние действия модераторов</b>\n"]
-    for item in logs:
-        details = f" — {escape(item['details'])}" if item["details"] else ""
-        lines.append(
-            f"<code>{item['created_at']}</code> | "
-            f"👨‍💼 <code>{item['admin_id']}</code> | "
-            f"<b>{escape(item['action'])}</b> | "
-            f"{escape(item['entity_type'])} #{item['entity_id'] or '-'}"
-            f"{details}"
-        )
-
-    text = "\n".join(lines)
-    if len(text) > 3900:
-        text = text[:3900] + "\n…"
-
-    await message.answer(text, parse_mode="HTML", reply_markup=admin_keyboard)
 
 
 # =========================================================
@@ -934,6 +914,113 @@ async def all_stories(
         reply_markup=admin_keyboard,
     )
 
+
+# =========================================================
+# ADMIN — PUBLICATIONS
+# =========================================================
+
+@router.message(F.text == "📚 Публикации")
+async def publications(message: Message):
+    if not is_admin(message.from_user.id):
+        return
+
+    stories = get_published_stories(30)
+    if not stories:
+        await message.answer("📚 Опубликованных историй пока нет.", reply_markup=admin_keyboard)
+        return
+
+    await message.answer(
+        f"📚 <b>Последние публикации: {len(stories)}</b>",
+        parse_mode="HTML",
+    )
+
+    from callbacks import get_channel_message_link
+    for story in stories:
+        link = None
+        if story["channel_message_id"]:
+            link = await get_channel_message_link(message.bot, story["channel_message_id"])
+        text = (
+            f"✅ <b>История #{story['id']}</b>\n"
+            f"👤 User ID: <code>{story['user_id']}</code>\n"
+            f"📅 {escape(str(story['published_at'] or story['created_at'] or ''))}"
+        )
+        markup = None
+        if link:
+            markup = InlineKeyboardMarkup(inline_keyboard=[[
+                InlineKeyboardButton(text="👀 Посмотреть", url=link)
+            ]])
+        await message.answer(text, parse_mode="HTML", reply_markup=markup)
+
+
+# =========================================================
+# ADMIN — USERS
+# =========================================================
+
+@router.message(F.text == "👥 Пользователи")
+async def users_menu(message: Message):
+    if not is_admin(message.from_user.id):
+        return
+
+    users = get_user_summary(30)
+    if not users:
+        await message.answer("👥 Пользователей пока нет.", reply_markup=admin_keyboard)
+        return
+
+    await message.answer(
+        f"👥 <b>Пользователи: {len(users)}</b>\n\n"
+        "Нажмите на пользователя, чтобы открыть подробный профиль.",
+        parse_mode="HTML",
+    )
+
+    from keyboards import user_profile_keyboard
+    for user in users:
+        await message.answer(
+            f"👤 <b>User ID:</b> <code>{user['user_id']}</code>\n"
+            f"📚 Историй: {user['stories_total'] or 0}\n"
+            f"✅ Опубликовано: {user['stories_published'] or 0}\n"
+            f"💬 Диалогов: {user['dialogs_total'] or 0}",
+            parse_mode="HTML",
+            reply_markup=user_profile_keyboard(user['user_id']),
+        )
+
+
+# =========================================================
+# ADMIN — SEARCH / FAVORITES / ANALYTICS
+# =========================================================
+
+@router.message(F.text == "🔎 Поиск")
+async def search_menu(message: Message, state: FSMContext):
+    if not is_admin(message.from_user.id): return
+    await state.clear(); await state.set_state(StoryState.search_stories)
+    await message.answer("🔎 <b>Поиск</b>\n\nВведите ID истории, User ID, тему или слово из текста.",parse_mode="HTML",reply_markup=admin_keyboard)
+
+@router.message(StoryState.search_stories)
+async def search_results(message: Message, state: FSMContext):
+    if not is_admin(message.from_user.id): await state.clear(); return
+    query=(message.text or "").strip()
+    if not query: await message.answer("❗ Введите запрос."); return
+    rows=search_stories(query,30); await state.clear()
+    if not rows: await message.answer("🔎 Ничего не найдено.",reply_markup=admin_keyboard); return
+    await message.answer(f"🔎 <b>Найдено: {len(rows)}</b>",parse_mode="HTML")
+    for story in rows:
+        await message.answer(f"📥 <b>#{story['id']}</b> · {story['status']}\n👤 User ID: <code>{story['user_id']}</code>\n🏷 {escape(str(story['category'] or 'другое'))}\n\n{escape(story['text'][:800])}",parse_mode="HTML",reply_markup=moderation_keyboard(story['id'],story['user_id']) if story['status']=='waiting' else None)
+
+@router.message(F.text == "⭐ Избранное")
+async def favorites_menu(message: Message):
+    if not is_admin(message.from_user.id): return
+    rows=get_favorite_stories(30)
+    if not rows: await message.answer("⭐ Избранных историй пока нет.",reply_markup=admin_keyboard); return
+    await message.answer(f"⭐ <b>Избранное: {len(rows)}</b>",parse_mode="HTML")
+    for story in rows:
+        await message.answer(f"⭐ <b>История #{story['id']}</b>\n👤 User ID: <code>{story['user_id']}</code>\n🏷 {escape(str(story['category'] or 'другое'))}\n\n{escape(story['text'][:800])}",parse_mode="HTML",reply_markup=moderation_keyboard(story['id'],story['user_id']) if story['status']=='waiting' else None)
+
+@router.message(F.text == "📈 Аналитика")
+async def analytics_menu(message: Message):
+    if not is_admin(message.from_user.id): return
+    d=get_analytics()
+    cats="\n".join(f"• {escape(str(k))}: {v}" for k,v in d['categories']) or "• нет данных"
+    recent="\n".join(f"• {day}: {n}" for day,n in d['recent']) or "• нет данных"
+    await message.answer("📈 <b>Аналитика проекта</b>\n\n" f"👥 Пользователей: {d['users']}\n📚 Историй: {d['total']}\n⏳ На модерации: {d['waiting']}\n✅ Опубликовано: {d['published']}\n❌ Отклонено: {d['rejected']}\n⭐ Избранных: {d['favorites']}\n💬 Диалогов: {d['dialogs']}\n\n🏷 <b>Темы:</b>\n{cats}\n\n📅 <b>Последние дни:</b>\n{recent}",parse_mode="HTML",reply_markup=admin_keyboard)
 
 # =========================================================
 # ADMIN — BACK
