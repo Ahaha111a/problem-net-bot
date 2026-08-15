@@ -89,3 +89,16 @@ async def analyze_story(story: str) -> str:
         print(f"Ошибка: {error}")
         print("=============================================")
         raise
+
+
+async def review_story(story: str) -> str:
+    if not story or not story.strip():
+        raise ValueError("История для проверки пустая.")
+    client = get_groq_client()
+    prompt = """Ты помощник модератора Telegram-бота «Проблем нет». Проверь историю перед публикацией. Не ставь диагнозов и не выдумывай фактов. Верни РОВНО две строки:
+КАЧЕСТВО: число от 1 до 10 и короткое объяснение.
+РИСК: Низкий / Средний / Высокий — и короткое объяснение. Если есть признаки непосредственной опасности, самоповреждения, суицида, угрозы жизни или насилия — укажи высокий риск и необходимость ручной проверки."""
+    response = await client.chat.completions.create(model=MODEL, messages=[{"role":"system","content":prompt},{"role":"user","content":story.strip()}], temperature=0.1, max_tokens=300)
+    content = response.choices[0].message.content if response.choices else None
+    if not content: raise RuntimeError("Groq вернул пустую проверку.")
+    return content.strip()
