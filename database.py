@@ -49,6 +49,8 @@ def init_db():
             ai_result TEXT,
             post_text TEXT,
             status TEXT DEFAULT 'waiting',
+            rejection_reason TEXT,
+            channel_message_id INTEGER,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
         """
@@ -69,6 +71,8 @@ def init_db():
             assigned_admin_id INTEGER,
             unread_admin INTEGER DEFAULT 0,
             personal_contact_requested INTEGER DEFAULT 0,
+            admin_control_chat_id INTEGER,
+            admin_control_message_id INTEGER,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
@@ -124,6 +128,8 @@ def init_db():
             "post_text": "TEXT",
             "status": "TEXT DEFAULT 'waiting'",
             "created_at": "TIMESTAMP",
+            "rejection_reason": "TEXT",
+            "channel_message_id": "INTEGER",
         },
 
         "support_dialogs": {
@@ -133,6 +139,8 @@ def init_db():
             "assigned_admin_id": "INTEGER",
             "unread_admin": "INTEGER DEFAULT 0",
             "personal_contact_requested": "INTEGER DEFAULT 0",
+            "admin_control_chat_id": "INTEGER",
+            "admin_control_message_id": "INTEGER",
             "created_at": "TIMESTAMP DEFAULT CURRENT_TIMESTAMP",
             "updated_at": "TIMESTAMP",
         },
@@ -386,9 +394,29 @@ def get_support_stats():
 
 
 def get_extended_stats():
+    connection = get_connection()
+    published_today = connection.execute(
+        """SELECT COUNT(*) AS count FROM stories
+           WHERE status = 'published'
+             AND date(created_at) = date('now')"""
+    ).fetchone()["count"]
+    rejected_today = connection.execute(
+        """SELECT COUNT(*) AS count FROM stories
+           WHERE status = 'rejected'
+             AND date(created_at) = date('now')"""
+    ).fetchone()["count"]
+    avg_dialog_messages = connection.execute(
+        """SELECT COALESCE(AVG(cnt), 0) AS value FROM (
+               SELECT COUNT(*) AS cnt FROM support_messages GROUP BY dialog_id
+           )"""
+    ).fetchone()["value"]
+    connection.close()
     stats = get_stats()
     stats["users"] = get_user_count()
     stats["support"] = get_support_stats()
+    stats["published_today"] = published_today
+    stats["rejected_today"] = rejected_today
+    stats["avg_dialog_messages"] = round(float(avg_dialog_messages or 0), 1)
     return stats
 
 # =========================================================
@@ -498,47 +526,33 @@ def get_story(
     return row
 
 
-def publish_story(
-    story_id: int,
-):
-
+def publish_story(story_id: int, channel_message_id: int | None = None):
     connection = get_connection()
-
-    connection.execute(
-        """
-        UPDATE stories
-        SET status = 'published'
-        WHERE id = ?
-        """,
-        (
-            story_id,
-        ),
-    )
-
+    if channel_message_id is None:
+        connection.execute(
+            "UPDATE stories SET status = 'published' WHERE id = ?",
+            (story_id,),
+        )
+    else:
+        connection.execute(
+            """UPDATE stories
+               SET status = 'published', channel_message_id = ?
+               WHERE id = ?""",
+            (channel_message_id, story_id),
+        )
     connection.commit()
-
     connection.close()
 
 
-def reject_story(
-    story_id: int,
-):
-
+def reject_story(story_id: int, reason: str | None = None):
     connection = get_connection()
-
     connection.execute(
-        """
-        UPDATE stories
-        SET status = 'rejected'
-        WHERE id = ?
-        """,
-        (
-            story_id,
-        ),
+        """UPDATE stories
+           SET status = 'rejected', rejection_reason = ?
+           WHERE id = ?""",
+        (reason, story_id),
     )
-
     connection.commit()
-
     connection.close()
 
 
@@ -963,6 +977,55 @@ def set_dialog_status(
 
     connection.commit()
 
+    connection.close()
+
+
+def get_admin_control_message(dialog_id: int):
+    connection = get_connection()
+    row = connection.execute(
+        """SELECT admin_control_chat_id, admin_control_message_id
+           FROM support_dialogs WHERE id = ?""",
+        (dialog_id,),
+    ).fetchone()
+    connection.close()
+    return row
+
+
+def set_admin_control_message(dialog_id: int, chat_id: int, message_id: int):
+    connection = get_connection()
+    connection.execute(
+        """UPDATE support_dialogs
+           SET admin_control_chat_id = ?,
+               admin_control_message_id = ?,
+               updated_at = CURRENT_TIMESTAMP
+           WHERE id = ?""",
+        (chat_id, message_id, dialog_id),
+    )
+    connection.commit()
+    connection.close()
+
+
+def clear_admin_control_message(dialog_id: int):
+    connection = get_connection()
+    connection.execute(
+        """UPDATE support_dialogs
+           SET admin_control_chat_id = NULL,
+               admin_control_message_id = NULL,
+               updated_at = CURRENT_TIMESTAMP
+           WHERE id = ?""",
+        (dialog_id,),
+    )
+    connection.commit()
+    connection.close()
+
+
+def set_rejection_reason(story_id: int, reason: str):
+    connection = get_connection()
+    connection.execute(
+        "UPDATE stories SET rejection_reason = ? WHERE id = ?",
+        (reason, story_id),
+    )
+    connection.commit()
     connection.close()
 
 
