@@ -28,6 +28,9 @@ from database import (
     register_user,
     get_extended_stats,
     get_admin_control_message,
+    detect_dialog_priority,
+    log_admin_action,
+    get_audit_logs,
 )
 
 from ai import analyze_story
@@ -504,7 +507,7 @@ async def notify_admins_about_message(
             sent = await message.bot.send_message(
                 admin_id,
                 admin_text,
-                reply_markup=support_new_message_keyboard(dialog_id),
+                reply_markup=support_new_message_keyboard(dialog_id, unassigned=(dialog["assigned_admin_id"] is None)),
                 parse_mode="HTML",
             )
             # Запоминаем последнее управляющее сообщение.
@@ -673,6 +676,7 @@ async def receive_story(
             "📊 Статистика",
             "💬 Диалоги",
             "📁 Все истории",
+            "📜 Журнал действий",
         }
     ),
 )
@@ -768,26 +772,21 @@ async def dialogs_menu(
             "resolved": "🟢 Решён",
         }
         support_status = dialog["support_status"] or "new"
+        priority = dialog["priority"] or 1
+        priority_name = {1: "🟢 Обычный", 2: "🟠 Повышенный", 3: "🔴 Срочный"}.get(priority, "🟢 Обычный")
         text = (
             f"💬 <b>Диалог #{dialog['id']}</b>\n\n"
             f"👤 User ID: "
-            f"<code>{dialog['user_id']}</code>\n\n"
+            f"<code>{dialog['user_id']}</code>\n"
+            f"📌 Приоритет: {priority_name}\n\n"
             f"{'🔴 Новых сообщений: ' + str(unread) if unread else '🟢 Нет новых сообщений'}\n\n"
             f"Последнее сообщение:\n"
             f"{escape(last_message)}"
         )
 
-        keyboard = InlineKeyboardMarkup(
-            inline_keyboard=[
-                [
-                    InlineKeyboardButton(
-                        text="💬 Открыть",
-                        callback_data=(
-                            f"dialog_open:{dialog['id']}"
-                        ),
-                    ),
-                ],
-            ],
+        keyboard = support_new_message_keyboard(
+            dialog["id"],
+            unassigned=(dialog["assigned_admin_id"] is None),
         )
 
         await message.answer(
@@ -849,10 +848,44 @@ async def statistics(message: Message):
         f"\n💬 Открытых диалогов: {support['open']}\n"
         f"🔴 Новых диалогов: {support['new']}\n"
         f"🟡 В работе: {support['in_progress']}\n"
-        f"💬 Среднее сообщений в диалоге: {stats['avg_dialog_messages']}",
+        f"💬 Среднее сообщений в диалоге: {stats['avg_dialog_messages']}\n"
+        f"⭐ Оценок поддержки: {stats['feedback']['count']}\n"
+        f"⭐ Средняя оценка: {stats['feedback']['avg_rating']}",
         parse_mode="HTML",
         reply_markup=admin_keyboard,
     )
+
+
+# =========================================================
+# ADMIN — AUDIT LOG
+# =========================================================
+
+@router.message(F.text == "📜 Журнал действий")
+async def audit_log(message: Message):
+    if not is_admin(message.from_user.id):
+        return
+
+    logs = get_audit_logs(50)
+    if not logs:
+        await message.answer("📜 Журнал пока пуст.", reply_markup=admin_keyboard)
+        return
+
+    lines = ["📜 <b>Последние действия модераторов</b>\n"]
+    for item in logs:
+        details = f" — {escape(item['details'])}" if item["details"] else ""
+        lines.append(
+            f"<code>{item['created_at']}</code> | "
+            f"👨‍💼 <code>{item['admin_id']}</code> | "
+            f"<b>{escape(item['action'])}</b> | "
+            f"{escape(item['entity_type'])} #{item['entity_id'] or '-'}"
+            f"{details}"
+        )
+
+    text = "\n".join(lines)
+    if len(text) > 3900:
+        text = text[:3900] + "\n…"
+
+    await message.answer(text, parse_mode="HTML", reply_markup=admin_keyboard)
 
 
 # =========================================================
