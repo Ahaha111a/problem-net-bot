@@ -6,6 +6,8 @@ from groq import AsyncGroq
 
 load_dotenv()
 
+MODEL = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile").strip()
+
 
 def _client() -> AsyncGroq:
     api_key = os.getenv("GROQ_API_KEY", "").strip()
@@ -16,7 +18,7 @@ def _client() -> AsyncGroq:
 
 async def create_post(story: str):
     response = await _client().chat.completions.create(
-        model="llama-3.3-70b-versatile",
+        model=MODEL,
         messages=[
             {
                 "role": "system",
