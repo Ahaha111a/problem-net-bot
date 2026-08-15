@@ -94,6 +94,77 @@ async def safe_remove_keyboard(
         pass
 
 
+async def remove_keyboard_from_message(message: Message):
+    try:
+        await message.edit_reply_markup(reply_markup=None)
+    except Exception:
+        pass
+
+
+def build_dialog_text(dialog_id: int, user_id: int, messages, support_status: str):
+    status_names = {
+        "new": "🔴 Новый",
+        "in_progress": "🟡 В работе",
+        "waiting_user": "🟠 Ожидает пользователя",
+        "closed": "⚫ Закрыт",
+    }
+
+    text = (
+        f"💬 <b>Диалог #{dialog_id}</b>\n\n"
+        f"👤 User ID: <code>{user_id}</code>\n"
+        f"📌 Статус: {status_names.get(support_status, support_status)}\n\n"
+        "━━━━━━━━━━━━━━\n\n"
+    )
+
+    if not messages:
+        text += "Сообщений пока нет.\n"
+    else:
+        for item in messages:
+            prefix = (
+                "👤 Пользователь"
+                if item["sender_type"] == "user"
+                else "👨‍💼 Сотрудник"
+            )
+            text += f"<b>{prefix}</b>\n{escape(item['text'])}\n\n"
+
+    return text
+
+
+async def refresh_dialog_control_message(
+    bot,
+    state: FSMContext,
+    dialog_id: int,
+):
+    dialog = get_dialog(dialog_id)
+    if not dialog:
+        return None
+
+    messages = get_dialog_messages(dialog_id)
+    text = build_dialog_text(
+        dialog_id,
+        dialog["user_id"],
+        messages,
+        dialog["support_status"] or "new",
+    )
+    markup = support_dialog_keyboard(dialog_id)
+    data = await state.get_data()
+    control_message_id = data.get("moderator_control_message_id")
+    if control_message_id:
+        try:
+            edited = await bot.edit_message_text(
+                chat_id=dialog["assigned_admin_id"] or data.get("moderator_admin_id"),
+                message_id=control_message_id,
+                text=text,
+                parse_mode="HTML",
+                reply_markup=markup,
+            )
+            await state.update_data(moderator_control_message_id=control_message_id)
+            return edited
+        except Exception:
+            pass
+    return None
+
+
 # =========================================================
 # ADMIN MENU PRIORITY HANDLER
 # =========================================================
@@ -693,8 +764,12 @@ async def edit_handler(
     await state.clear()
 
     await state.update_data(
-        editing_story_id=story_id
+        editing_story_id=story_id,
+        moderation_chat_id=callback.message.chat.id if callback.message else None,
+        moderation_message_id=callback.message.message_id if callback.message else None,
     )
+
+    await safe_remove_keyboard(callback)
 
     await state.set_state(
         StoryState.waiting_for_edit
@@ -801,7 +876,37 @@ async def save_edited_post(
         message.text.strip(),
     )
 
+    data = await state.get_data()
+    moderation_chat_id = data.get("moderation_chat_id")
+    moderation_message_id = data.get("moderation_message_id")
+
     await state.clear()
+
+    updated = get_story(story_id)
+    if moderation_chat_id and moderation_message_id and updated:
+        post_text = updated["post_text"] or "⚠️ Пост отсутствует."
+        card = (
+            f"📥 <b>История #{story_id}</b>\n\n"
+            f"👤 User ID: <code>{updated['user_id']}</code>\n\n"
+            f"💭 <b>Текст:</b>\n\n{escape(updated['text'])}\n\n"
+            "━━━━━━━━━━━━━━\n\n"
+            f"📌 <b>Готовый пост:</b>\n\n{escape(post_text)}"
+        )
+        try:
+            await message.bot.edit_message_text(
+                chat_id=moderation_chat_id,
+                message_id=moderation_message_id,
+                text=card,
+                parse_mode="HTML",
+                reply_markup=moderation_keyboard(story_id, updated["user_id"]),
+            )
+            await message.answer(
+                f"✅ Пост истории #{story_id} изменён. Кнопки обновлены под историей.",
+                reply_markup=admin_keyboard,
+            )
+            return
+        except Exception as error:
+            print(f"MODERATION CARD UPDATE ERROR: {error}")
 
     await message.answer(
         f"✅ Пост истории #{story_id} изменён.",
@@ -1084,69 +1189,35 @@ async def dialog_open_handler(
     await state.clear()
 
     await state.update_data(
-        moderator_dialog_id=dialog_id
+        moderator_dialog_id=dialog_id,
+        moderator_admin_id=current_admin_id,
     )
+
+    await safe_remove_keyboard(callback)
 
     await state.set_state(
         StoryState.moderator_dialog
     )
 
-    messages = get_dialog_messages(
-        dialog_id
+    messages = get_dialog_messages(dialog_id)
+    text = build_dialog_text(
+        dialog_id,
+        dialog["user_id"],
+        messages,
+        dialog["support_status"] or "new",
     )
-
-    status_names = {
-        "new": "🔴 Новый",
-        "in_progress": "🟡 В работе",
-        "waiting_user": "🟠 Ожидает пользователя",
-        "closed": "⚫ Закрыт",
-    }
-
-    support_status = (
-        dialog["support_status"]
-        or "new"
-    )
-
-    text = (
-        f"💬 <b>Диалог #{dialog_id}</b>\n\n"
-        f"👤 User ID: "
-        f"<code>{dialog['user_id']}</code>\n"
-        f"📌 Статус: "
-        f"{status_names.get(support_status, support_status)}\n\n"
-        "━━━━━━━━━━━━━━\n\n"
-    )
-
-    if not messages:
-
-        text += (
-            "Сообщений пока нет.\n"
-        )
-
-    else:
-
-        for item in messages:
-
-            prefix = (
-                "👤 Пользователь"
-                if item["sender_type"] == "user"
-                else "👨‍💼 Сотрудник"
-            )
-
-            text += (
-                f"<b>{prefix}</b>\n"
-                f"{escape(item['text'])}\n\n"
-            )
 
     await callback.answer()
 
-    await callback.message.answer(
+    sent = await callback.message.answer(
         text,
         parse_mode="HTML",
-        reply_markup=(
-            support_dialog_keyboard(
-                dialog_id
-            )
-        ),
+        reply_markup=support_dialog_keyboard(dialog_id),
+    )
+
+    await state.update_data(
+        moderator_control_message_id=sent.message_id,
+        moderator_admin_id=current_admin_id,
     )
 
 
@@ -1191,6 +1262,18 @@ async def moderator_back(
             unassign_dialog(
                 dialog_id
             )
+
+    data = await state.get_data()
+    control_message_id = data.get("moderator_control_message_id")
+    if control_message_id:
+        try:
+            await message.bot.edit_message_reply_markup(
+                chat_id=message.chat.id,
+                message_id=control_message_id,
+                reply_markup=None,
+            )
+        except Exception:
+            pass
 
     await state.clear()
 
@@ -1285,6 +1368,23 @@ async def dialog_waiting_handler(
         print(
             f"WAITING USER NOTIFY ERROR: {error}"
         )
+
+    dialog = get_dialog(dialog_id)
+    messages = get_dialog_messages(dialog_id)
+    text = build_dialog_text(
+        dialog_id,
+        dialog["user_id"],
+        messages,
+        "waiting_user",
+    )
+    try:
+        await callback.message.edit_text(
+            text,
+            parse_mode="HTML",
+            reply_markup=support_dialog_keyboard(dialog_id),
+        )
+    except Exception as error:
+        print(f"DIALOG WAITING UI ERROR: {error}")
 
     await callback.answer(
         "🟠 Диалог ожидает пользователя."
@@ -1525,9 +1625,21 @@ async def dialog_close_handler(
             f"CLOSE USER ERROR: {error}"
         )
 
-    await safe_remove_keyboard(
-        callback
-    )
+    try:
+        closed_text = (
+            f"💬 <b>Диалог #{dialog_id}</b>\n\n"
+            f"👤 User ID: <code>{dialog['user_id']}</code>\n"
+            "📌 Статус: ⚫ Закрыт\n\n"
+            "━━━━━━━━━━━━━━\n\n"
+            "🔴 Диалог закрыт."
+        )
+        await callback.message.edit_text(
+            closed_text,
+            parse_mode="HTML",
+            reply_markup=None,
+        )
+    except Exception as error:
+        print(f"DIALOG CLOSE UI ERROR: {error}")
 
     await callback.answer(
         "🔴 Диалог закрыт."
@@ -1654,6 +1766,40 @@ async def moderator_dialog_message(
             + escape(text),
             parse_mode="HTML",
         )
+
+        # Старое сообщение с кнопками убираем, а новое сообщение
+        # с полной историей диалога и актуальными кнопками ставим последним.
+        data = await state.get_data()
+        old_control_id = data.get("moderator_control_message_id")
+        if old_control_id:
+            try:
+                await message.bot.edit_message_reply_markup(
+                    chat_id=message.chat.id,
+                    message_id=old_control_id,
+                    reply_markup=None,
+                )
+            except Exception:
+                pass
+
+        fresh_dialog = get_dialog(dialog_id)
+        fresh_messages = get_dialog_messages(dialog_id)
+        fresh_text = build_dialog_text(
+            dialog_id,
+            fresh_dialog["user_id"],
+            fresh_messages,
+            fresh_dialog["support_status"] or "in_progress",
+        )
+        try:
+            control = await message.answer(
+                fresh_text,
+                parse_mode="HTML",
+                reply_markup=support_dialog_keyboard(dialog_id),
+            )
+            await state.update_data(
+                moderator_control_message_id=control.message_id
+            )
+        except Exception as error:
+            print(f"DIALOG CONTROL REFRESH ERROR: {error}")
 
         await message.answer(
             "✅ Сообщение отправлено."
