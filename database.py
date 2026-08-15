@@ -71,6 +71,7 @@ def init_db():
             assigned_admin_id INTEGER,
             unread_admin INTEGER DEFAULT 0,
             personal_contact_requested INTEGER DEFAULT 0,
+            priority INTEGER DEFAULT 1,
             admin_control_chat_id INTEGER,
             admin_control_message_id INTEGER,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -117,6 +118,34 @@ def init_db():
         """
     )
 
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS audit_logs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            admin_id INTEGER NOT NULL,
+            action TEXT NOT NULL,
+            entity_type TEXT NOT NULL,
+            entity_id INTEGER,
+            details TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+        """
+    )
+
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS support_feedback (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            dialog_id INTEGER NOT NULL UNIQUE,
+            user_id INTEGER NOT NULL,
+            rating INTEGER NOT NULL,
+            comment TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY(dialog_id) REFERENCES support_dialogs(id)
+        )
+        """
+    )
+
     # =====================================================
     # SOFT MIGRATIONS
     # =====================================================
@@ -139,6 +168,7 @@ def init_db():
             "assigned_admin_id": "INTEGER",
             "unread_admin": "INTEGER DEFAULT 0",
             "personal_contact_requested": "INTEGER DEFAULT 0",
+            "priority": "INTEGER DEFAULT 1",
             "admin_control_chat_id": "INTEGER",
             "admin_control_message_id": "INTEGER",
             "created_at": "TIMESTAMP DEFAULT CURRENT_TIMESTAMP",
@@ -417,6 +447,7 @@ def get_extended_stats():
     stats["published_today"] = published_today
     stats["rejected_today"] = rejected_today
     stats["avg_dialog_messages"] = round(float(avg_dialog_messages or 0), 1)
+    stats["feedback"] = get_feedback_stats()
     return stats
 
 # =========================================================
@@ -640,6 +671,68 @@ def get_stats():
 # SUPPORT
 # =========================================================
 
+def detect_dialog_priority(text: str) -> int:
+    text = (text or "").lower()
+    urgent = (
+        "суицид", "самоуб", "убить себя", "не хочу жить",
+        "покончу", "порежу себя", "опасно", "угрожают",
+        "насилие", "избивают", "угрожает жизни", "кровь",
+    )
+    high = (
+        "паническая атака", "паника", "не могу справиться",
+        "срочно", "очень плохо", "кризис", "страшно",
+    )
+    if any(x in text for x in urgent):
+        return 3
+    if any(x in text for x in high):
+        return 2
+    return 1
+
+
+def log_admin_action(admin_id: int, action: str, entity_type: str, entity_id: int | None = None, details: str | None = None):
+    connection = get_connection()
+    connection.execute(
+        """INSERT INTO audit_logs (admin_id, action, entity_type, entity_id, details)
+           VALUES (?, ?, ?, ?, ?)""",
+        (admin_id, action, entity_type, entity_id, details),
+    )
+    connection.commit()
+    connection.close()
+
+
+def get_audit_logs(limit: int = 50):
+    connection = get_connection()
+    rows = connection.execute(
+        """SELECT * FROM audit_logs ORDER BY id DESC LIMIT ?""",
+        (limit,),
+    ).fetchall()
+    connection.close()
+    return rows
+
+
+def save_support_feedback(dialog_id: int, user_id: int, rating: int, comment: str | None = None):
+    rating = max(1, min(5, int(rating)))
+    connection = get_connection()
+    connection.execute(
+        """INSERT INTO support_feedback (dialog_id, user_id, rating, comment)
+           VALUES (?, ?, ?, ?)
+           ON CONFLICT(dialog_id) DO UPDATE SET rating=excluded.rating, comment=excluded.comment""",
+        (dialog_id, user_id, rating, comment),
+    )
+    connection.commit()
+    connection.close()
+
+
+def get_feedback_stats():
+    connection = get_connection()
+    row = connection.execute(
+        """SELECT COUNT(*) AS count, COALESCE(AVG(rating), 0) AS avg_rating
+           FROM support_feedback"""
+    ).fetchone()
+    connection.close()
+    return {"count": row["count"], "avg_rating": round(float(row["avg_rating"] or 0), 2)}
+
+
 def create_support_dialog(
     user_id: int,
     first_message: str,
@@ -656,6 +749,7 @@ def create_support_dialog(
             first_message,
             status,
             support_status,
+            priority,
             unread_admin
         )
         VALUES (
@@ -663,12 +757,14 @@ def create_support_dialog(
             ?,
             'open',
             'new',
+            ?,
             1
         )
         """,
         (
             user_id,
             first_message,
+            detect_dialog_priority(first_message),
         ),
     )
 
@@ -802,10 +898,12 @@ def add_support_message(
             UPDATE support_dialogs
             SET
                 unread_admin = unread_admin + 1,
+                priority = MAX(priority, ?),
                 updated_at = CURRENT_TIMESTAMP
             WHERE id = ?
             """,
             (
+                detect_dialog_priority(text),
                 dialog_id,
             ),
         )
@@ -846,7 +944,7 @@ def get_open_dialogs():
             ) AS last_message
         FROM support_dialogs d
         WHERE d.status = 'open'
-        ORDER BY d.updated_at DESC
+        ORDER BY d.priority DESC, d.updated_at DESC
         """
     ).fetchall()
 
