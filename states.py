@@ -12,3 +12,4 @@ class StoryState(StatesGroup):
     waiting_for_reject_reason = State()
 
     moderator_dialog = State()
+    search_stories = State()
