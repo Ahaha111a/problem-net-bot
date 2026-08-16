@@ -28,11 +28,14 @@ from database import (
     register_user,
     get_extended_stats,
     get_admin_control_message,
-    get_published_stories,
-    get_user_summary,
-    search_stories,
+    get_admin_audit,
+    get_reaction_stats,
     get_analytics,
-    get_favorite_stories,
+    get_scheduled_stories,
+    get_admin_role,
+    get_admin_roles,
+    set_admin_role,
+    ensure_admin_roles,
 )
 
 from ai import analyze_story
@@ -146,6 +149,10 @@ def is_admin(user_id: int) -> bool:
     return user_id in ADMIN_IDS
 
 
+def is_owner(user_id: int) -> bool:
+    return is_admin(user_id) and user_id == ADMIN_IDS[0]
+
+
 # =========================================================
 # CHANNEL LINKS
 # =========================================================
@@ -207,6 +214,7 @@ async def start_command(
     state: FSMContext,
 ):
     await state.clear()
+    ensure_admin_roles(ADMIN_IDS)
     register_user(message.from_user.id)
 
     if is_admin(message.from_user.id):
@@ -394,7 +402,6 @@ async def emergency_support(
     message: Message,
     state: FSMContext,
 ):
-    register_user(message.from_user.id)
     await state.clear()
 
     await state.set_state(
@@ -424,7 +431,6 @@ async def receive_support_message(
     message: Message,
     state: FSMContext,
 ):
-    register_user(message.from_user.id)
     if not message.text:
         await message.answer(
             "❗ Отправьте текстовое сообщение."
@@ -530,7 +536,6 @@ async def start_story(
     message: Message,
     state: FSMContext,
 ):
-    register_user(message.from_user.id)
     await state.clear()
 
     await state.set_state(
@@ -681,11 +686,10 @@ async def receive_story(
             "📊 Статистика",
             "💬 Диалоги",
             "📁 Все истории",
-            "📚 Публикации",
-            "👥 Пользователи",
-            "⭐ Избранное",
-            "🔎 Поиск",
+            "📜 Журнал действий",
             "📈 Аналитика",
+            "🗓 Запланированные",
+            "💾 Резервная копия",
         }
     ),
 )
@@ -862,7 +866,10 @@ async def statistics(message: Message):
         f"\n💬 Открытых диалогов: {support['open']}\n"
         f"🔴 Новых диалогов: {support['new']}\n"
         f"🟡 В работе: {support['in_progress']}\n"
-        f"💬 Среднее сообщений в диалоге: {stats['avg_dialog_messages']}",
+        f"💬 Среднее сообщений в диалоге: {stats['avg_dialog_messages']}\n\n"
+        f"❤️ Реакций: {get_reaction_stats()['heart']}\n"
+        f"💙 Понимаю: {get_reaction_stats()['understand']}\n"
+        f"🤝 Поддерживаю: {get_reaction_stats()['support']}",
         parse_mode="HTML",
         reply_markup=admin_keyboard,
     )
@@ -894,6 +901,7 @@ async def all_stories(
 
         icons = {
             "waiting": "⏳",
+            "publishing": "🚀",
             "published": "✅",
             "rejected": "❌",
         }
@@ -916,111 +924,147 @@ async def all_stories(
 
 
 # =========================================================
-# ADMIN — PUBLICATIONS
+# ADMIN — ANALYTICS (Y)
 # =========================================================
-
-@router.message(F.text == "📚 Публикации")
-async def publications(message: Message):
-    if not is_admin(message.from_user.id):
-        return
-
-    stories = get_published_stories(30)
-    if not stories:
-        await message.answer("📚 Опубликованных историй пока нет.", reply_markup=admin_keyboard)
-        return
-
-    await message.answer(
-        f"📚 <b>Последние публикации: {len(stories)}</b>",
-        parse_mode="HTML",
-    )
-
-    from callbacks import get_channel_message_link
-    for story in stories:
-        link = None
-        if story["channel_message_id"]:
-            link = await get_channel_message_link(message.bot, story["channel_message_id"])
-        text = (
-            f"✅ <b>История #{story['id']}</b>\n"
-            f"👤 User ID: <code>{story['user_id']}</code>\n"
-            f"📅 {escape(str(story['published_at'] or story['created_at'] or ''))}"
-        )
-        markup = None
-        if link:
-            markup = InlineKeyboardMarkup(inline_keyboard=[[
-                InlineKeyboardButton(text="👀 Посмотреть", url=link)
-            ]])
-        await message.answer(text, parse_mode="HTML", reply_markup=markup)
-
-
-# =========================================================
-# ADMIN — USERS
-# =========================================================
-
-@router.message(F.text == "👥 Пользователи")
-async def users_menu(message: Message):
-    if not is_admin(message.from_user.id):
-        return
-
-    users = get_user_summary(30)
-    if not users:
-        await message.answer("👥 Пользователей пока нет.", reply_markup=admin_keyboard)
-        return
-
-    await message.answer(
-        f"👥 <b>Пользователи: {len(users)}</b>\n\n"
-        "Нажмите на пользователя, чтобы открыть подробный профиль.",
-        parse_mode="HTML",
-    )
-
-    from keyboards import user_profile_keyboard
-    for user in users:
-        await message.answer(
-            f"👤 <b>User ID:</b> <code>{user['user_id']}</code>\n"
-            f"📚 Историй: {user['stories_total'] or 0}\n"
-            f"✅ Опубликовано: {user['stories_published'] or 0}\n"
-            f"💬 Диалогов: {user['dialogs_total'] or 0}",
-            parse_mode="HTML",
-            reply_markup=user_profile_keyboard(user['user_id']),
-        )
-
-
-# =========================================================
-# ADMIN — SEARCH / FAVORITES / ANALYTICS
-# =========================================================
-
-@router.message(F.text == "🔎 Поиск")
-async def search_menu(message: Message, state: FSMContext):
-    if not is_admin(message.from_user.id): return
-    await state.clear(); await state.set_state(StoryState.search_stories)
-    await message.answer("🔎 <b>Поиск</b>\n\nВведите ID истории, User ID, тему или слово из текста.",parse_mode="HTML",reply_markup=admin_keyboard)
-
-@router.message(StoryState.search_stories)
-async def search_results(message: Message, state: FSMContext):
-    if not is_admin(message.from_user.id): await state.clear(); return
-    query=(message.text or "").strip()
-    if not query: await message.answer("❗ Введите запрос."); return
-    rows=search_stories(query,30); await state.clear()
-    if not rows: await message.answer("🔎 Ничего не найдено.",reply_markup=admin_keyboard); return
-    await message.answer(f"🔎 <b>Найдено: {len(rows)}</b>",parse_mode="HTML")
-    for story in rows:
-        await message.answer(f"📥 <b>#{story['id']}</b> · {story['status']}\n👤 User ID: <code>{story['user_id']}</code>\n🏷 {escape(str(story['category'] or 'другое'))}\n\n{escape(story['text'][:800])}",parse_mode="HTML",reply_markup=moderation_keyboard(story['id'],story['user_id']) if story['status']=='waiting' else None)
-
-@router.message(F.text == "⭐ Избранное")
-async def favorites_menu(message: Message):
-    if not is_admin(message.from_user.id): return
-    rows=get_favorite_stories(30)
-    if not rows: await message.answer("⭐ Избранных историй пока нет.",reply_markup=admin_keyboard); return
-    await message.answer(f"⭐ <b>Избранное: {len(rows)}</b>",parse_mode="HTML")
-    for story in rows:
-        await message.answer(f"⭐ <b>История #{story['id']}</b>\n👤 User ID: <code>{story['user_id']}</code>\n🏷 {escape(str(story['category'] or 'другое'))}\n\n{escape(story['text'][:800])}",parse_mode="HTML",reply_markup=moderation_keyboard(story['id'],story['user_id']) if story['status']=='waiting' else None)
 
 @router.message(F.text == "📈 Аналитика")
-async def analytics_menu(message: Message):
-    if not is_admin(message.from_user.id): return
-    d=get_analytics()
-    cats="\n".join(f"• {escape(str(k))}: {v}" for k,v in d['categories']) or "• нет данных"
-    recent="\n".join(f"• {day}: {n}" for day,n in d['recent']) or "• нет данных"
-    await message.answer("📈 <b>Аналитика проекта</b>\n\n" f"👥 Пользователей: {d['users']}\n📚 Историй: {d['total']}\n⏳ На модерации: {d['waiting']}\n✅ Опубликовано: {d['published']}\n❌ Отклонено: {d['rejected']}\n⭐ Избранных: {d['favorites']}\n💬 Диалогов: {d['dialogs']}\n\n🏷 <b>Темы:</b>\n{cats}\n\n📅 <b>Последние дни:</b>\n{recent}",parse_mode="HTML",reply_markup=admin_keyboard)
+async def analytics_handler(message: Message):
+    if not is_admin(message.from_user.id):
+        return
+
+    data = get_analytics()
+    lines = [
+        "📈 <b>Аналитика проекта</b>",
+        "",
+        f"👥 Пользователей: <b>{data['users']}</b>",
+        f"📚 Историй: <b>{data['stories']}</b>",
+        f"⏳ На модерации: <b>{data['waiting']}</b>",
+        f"🗓 Запланировано: <b>{data['scheduled']}</b>",
+        f"🚀 В публикации: <b>{data['publishing']}</b>",
+        f"✅ Опубликовано: <b>{data['published']}</b>",
+        f"❌ Отклонено: <b>{data['rejected']}</b>",
+        f"💬 Диалогов: <b>{data['dialogs']}</b>",
+        f"🟢 Открытых диалогов: <b>{data['open_dialogs']}</b>",
+        f"💬 Сообщений поддержки: <b>{data['messages']}</b>",
+        f"❤️💙🤝 Реакций: <b>{data['reactions']}</b>",
+        "",
+        "🏷 <b>Темы историй:</b>",
+    ]
+    if data['categories']:
+        lines.extend(f"• {escape(row['category'])}: {row['count']}" for row in data['categories'])
+    else:
+        lines.append("• Пока нет данных")
+    lines += ["", "📅 <b>Истории за последние 7 дней:</b>"]
+    if data['daily']:
+        lines.extend(f"• {row['day']}: {row['count']}" for row in data['daily'])
+    else:
+        lines.append("• Пока нет данных")
+
+    await message.answer("\n".join(lines), parse_mode="HTML", reply_markup=admin_keyboard)
+
+
+# =========================================================
+# ADMIN — SCHEDULED PUBLICATIONS (W)
+# =========================================================
+
+@router.message(F.text.in_({"🗓 Запланированные", "🗓 Планировщик"}))
+async def scheduled_handler(message: Message):
+    if not is_admin(message.from_user.id):
+        return
+    rows = get_scheduled_stories(50)
+    if not rows:
+        await message.answer("🗓 Запланированных публикаций нет.", reply_markup=admin_keyboard)
+        return
+    lines = ["🗓 <b>Планировщик публикаций</b>\n"]
+    for row in rows:
+        lines.append(
+            f"#{row['id']} — <b>{escape(str(row['scheduled_at']))}</b>\n"
+            f"👤 <code>{row['user_id']}</code>\n──────────────"
+        )
+    await message.answer("\n".join(lines)[:4000], parse_mode="HTML", reply_markup=admin_keyboard)
+
+
+# =========================================================
+# ADMIN — ROLES (Z)
+# =========================================================
+
+@router.message(F.text == "👥 Роли администраторов")
+async def roles_handler(message: Message):
+    if not is_owner(message.from_user.id):
+        await message.answer("⛔ Управлять ролями может только владелец бота.", reply_markup=admin_keyboard)
+        return
+    ensure_admin_roles(ADMIN_IDS)
+    rows = get_admin_roles()
+    role_names = {"owner": "👑 Владелец", "moderator": "🛡 Модератор", "support": "💬 Поддержка", "analyst": "📈 Аналитик"}
+    lines = ["👥 <b>Роли администраторов</b>\n"]
+    for row in rows:
+        lines.append(f"<code>{row['user_id']}</code> — {role_names.get(row['role'], row['role'])}")
+    lines.append("\nЧтобы изменить роль, отправьте: <code>ID роль</code>\nРоли: owner / moderator / support / analyst")
+    await message.answer("\n".join(lines), parse_mode="HTML", reply_markup=admin_keyboard)
+    await message.answer("✏️ Например: <code>123456789 support</code>", parse_mode="HTML")
+    # Используем отдельное состояние для следующего сообщения.
+    from states import StoryState
+    from aiogram.fsm.context import FSMContext
+    # state не передан в handler, поэтому роль можно менять через отдельную команду ниже.
+
+
+@router.message(Command("role"))
+async def role_command(message: Message):
+    if not is_owner(message.from_user.id):
+        return
+    parts = (message.text or "").split()
+    if len(parts) != 3:
+        await message.answer("Формат: <code>/role USER_ID ROLE</code>", parse_mode="HTML")
+        return
+    try:
+        user_id = int(parts[1])
+    except ValueError:
+        await message.answer("❌ Некорректный ID.")
+        return
+    role = parts[2].lower()
+    if user_id not in ADMIN_IDS or role not in {"owner", "moderator", "support", "analyst"}:
+        await message.answer("❌ ID должен быть в ADMIN_IDS, а роль — owner/moderator/support/analyst.")
+        return
+    set_admin_role(user_id, role)
+    await message.answer(f"✅ Роль <code>{user_id}</code> изменена на <b>{escape(role)}</b>.", parse_mode="HTML", reply_markup=admin_keyboard)
+
+
+# =========================================================
+# ADMIN — AUDIT LOG
+# =========================================================
+
+@router.message(F.text == "📜 Журнал действий")
+async def audit_log_handler(message: Message):
+    if not is_admin(message.from_user.id):
+        return
+
+    rows = get_admin_audit(50)
+    if not rows:
+        await message.answer("📜 Журнал пока пуст.", reply_markup=admin_keyboard)
+        return
+
+    lines = ["📜 <b>Журнал действий</b>\n"]
+    for row in rows:
+        details = escape(row["details"] or "")
+        target = []
+        if row["story_id"]:
+            target.append(f"история #{row['story_id']}")
+        if row["dialog_id"]:
+            target.append(f"диалог #{row['dialog_id']}")
+        if row["user_id"]:
+            target.append(f"user {row['user_id']}")
+        target_text = ", ".join(target) or "без объекта"
+        lines.append(
+            f"🕒 {escape(str(row['created_at']))}\n"
+            f"👨‍💼 <code>{row['admin_id']}</code> — <b>{escape(row['action'])}</b>\n"
+            f"🎯 {escape(target_text)}\n"
+            f"{details}\n"
+            "──────────────"
+        )
+
+    text = "\n".join(lines)
+    await message.answer(text[:4000], parse_mode="HTML", reply_markup=admin_keyboard)
+
 
 # =========================================================
 # ADMIN — BACK
