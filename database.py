@@ -51,6 +51,10 @@ def init_db():
             status TEXT DEFAULT 'waiting',
             rejection_reason TEXT,
             channel_message_id INTEGER,
+            ai_moderation_result TEXT,
+            category TEXT,
+            scheduled_at TIMESTAMP,
+            scheduled_by INTEGER,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
         """
@@ -71,7 +75,6 @@ def init_db():
             assigned_admin_id INTEGER,
             unread_admin INTEGER DEFAULT 0,
             personal_contact_requested INTEGER DEFAULT 0,
-            priority INTEGER DEFAULT 1,
             admin_control_chat_id INTEGER,
             admin_control_message_id INTEGER,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -112,39 +115,132 @@ def init_db():
             user_id INTEGER PRIMARY KEY,
             notification_date TEXT,
             notification_minute INTEGER,
+            notification_at TEXT,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
         """
     )
 
+    # =====================================================
+    # REACTIONS
+    # =====================================================
+
     cursor.execute(
         """
-        CREATE TABLE IF NOT EXISTS audit_logs (
+        CREATE TABLE IF NOT EXISTS story_reactions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            story_id INTEGER NOT NULL,
+            user_id INTEGER NOT NULL,
+            reaction TEXT NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(story_id, user_id),
+            FOREIGN KEY(story_id) REFERENCES stories(id)
+        )
+        """
+    )
+
+    # =====================================================
+    # ADMIN AUDIT LOG
+    # =====================================================
+
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS admin_audit_log (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             admin_id INTEGER NOT NULL,
             action TEXT NOT NULL,
-            entity_type TEXT NOT NULL,
-            entity_id INTEGER,
+            story_id INTEGER,
+            dialog_id INTEGER,
+            user_id INTEGER,
             details TEXT,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
         """
     )
 
+    # =====================================================
+    # ADMIN ROLES (Z)
+    # =====================================================
+
     cursor.execute(
         """
-        CREATE TABLE IF NOT EXISTS support_feedback (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            dialog_id INTEGER NOT NULL UNIQUE,
-            user_id INTEGER NOT NULL,
-            rating INTEGER NOT NULL,
-            comment TEXT,
+        CREATE TABLE IF NOT EXISTS admin_roles (
+            user_id INTEGER PRIMARY KEY,
+            role TEXT DEFAULT 'moderator',
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY(dialog_id) REFERENCES support_dialogs(id)
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
         """
     )
+
+
+    # =====================================================
+    # MODERATION / SUPPORT EXTENSIONS (AB, AJ, AK, AL, AN, AO-AR)
+    # =====================================================
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS story_complaints (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            story_id INTEGER NOT NULL,
+            user_id INTEGER NOT NULL,
+            reason TEXT NOT NULL,
+            status TEXT DEFAULT 'new',
+            priority TEXT DEFAULT 'normal',
+            assigned_admin_id INTEGER,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(story_id, user_id),
+            FOREIGN KEY(story_id) REFERENCES stories(id)
+        )
+    """)
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS story_versions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            story_id INTEGER NOT NULL,
+            version_no INTEGER NOT NULL,
+            text TEXT,
+            post_text TEXT,
+            changed_by INTEGER NOT NULL,
+            change_type TEXT NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY(story_id) REFERENCES stories(id)
+        )
+    """)
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS admin_notifications (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            admin_id INTEGER NOT NULL,
+            kind TEXT NOT NULL,
+            title TEXT NOT NULL,
+            body TEXT NOT NULL,
+            read_at TIMESTAMP,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS support_sla (
+            dialog_id INTEGER PRIMARY KEY,
+            priority TEXT DEFAULT 'normal',
+            first_response_due_at TIMESTAMP,
+            resolved_at TIMESTAMP,
+            FOREIGN KEY(dialog_id) REFERENCES support_dialogs(id)
+        )
+    """)
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS moderator_actions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            admin_id INTEGER NOT NULL,
+            action TEXT NOT NULL,
+            target_type TEXT,
+            target_id INTEGER,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
 
     # =====================================================
     # SOFT MIGRATIONS
@@ -159,6 +255,10 @@ def init_db():
             "created_at": "TIMESTAMP",
             "rejection_reason": "TEXT",
             "channel_message_id": "INTEGER",
+            "ai_moderation_result": "TEXT",
+            "category": "TEXT",
+            "scheduled_at": "TIMESTAMP",
+            "scheduled_by": "INTEGER",
         },
 
         "support_dialogs": {
@@ -168,7 +268,6 @@ def init_db():
             "assigned_admin_id": "INTEGER",
             "unread_admin": "INTEGER DEFAULT 0",
             "personal_contact_requested": "INTEGER DEFAULT 0",
-            "priority": "INTEGER DEFAULT 1",
             "admin_control_chat_id": "INTEGER",
             "admin_control_message_id": "INTEGER",
             "created_at": "TIMESTAMP DEFAULT CURRENT_TIMESTAMP",
@@ -178,6 +277,13 @@ def init_db():
         "users": {
             "notification_date": "TEXT",
             "notification_minute": "INTEGER",
+            "notification_at": "TEXT",
+            "created_at": "TIMESTAMP DEFAULT CURRENT_TIMESTAMP",
+            "updated_at": "TIMESTAMP DEFAULT CURRENT_TIMESTAMP",
+        },
+
+        "admin_roles": {
+            "role": "TEXT DEFAULT 'moderator'",
             "created_at": "TIMESTAMP DEFAULT CURRENT_TIMESTAMP",
             "updated_at": "TIMESTAMP DEFAULT CURRENT_TIMESTAMP",
         },
@@ -217,6 +323,17 @@ def init_db():
         """
     )
 
+    # Инициализируем роли из ADMIN_IDS, не меняя существующие роли.
+    try:
+        admin_ids = [int(x.strip()) for x in os.getenv("ADMIN_IDS", "").split(",") if x.strip()]
+        for admin_id in admin_ids:
+            connection.execute(
+                "INSERT OR IGNORE INTO admin_roles (user_id, role) VALUES (?, ?)",
+                (admin_id, "owner" if admin_id == admin_ids[0] else "moderator"),
+            )
+    except Exception:
+        pass
+
     connection.commit()
 
     connection.close()
@@ -226,177 +343,53 @@ def init_db():
 # USERS
 # =========================================================
 
-def register_user(
-    user_id: int,
-):
-    """
-    Регистрирует пользователя.
-
-    Для нового пользователя назначается случайное
-    время ежедневного уведомления.
-
-    Интервал:
-    10:00 — 21:00
-    """
-
+def _random_next_notification_iso():
     import random
-    from datetime import datetime
+    from datetime import datetime, timedelta
     from zoneinfo import ZoneInfo
+    now = datetime.now(ZoneInfo("Europe/Oslo"))
+    # Случайное время примерно раз в 24 часа: от 23 до 25 часов после предыдущего.
+    seconds = random.randint(23 * 3600, 25 * 3600)
+    return (now + timedelta(seconds=seconds)).isoformat()
 
-    timezone = ZoneInfo(
-        "Europe/Oslo"
-    )
 
-    today = (
-        datetime
-        .now(timezone)
-        .date()
-        .isoformat()
-    )
-
+def register_user(user_id: int):
     connection = get_connection()
-
     row = connection.execute(
-        """
-        SELECT
-            user_id,
-            notification_date,
-            notification_minute
-        FROM users
-        WHERE user_id = ?
-        """,
+        "SELECT user_id, notification_at FROM users WHERE user_id = ?",
         (user_id,),
     ).fetchone()
-
-    # -----------------------------------------------------
-    # Новый пользователь
-    # -----------------------------------------------------
-
     if row is None:
-
-        notification_minute = random.randint(
-            10 * 60,
-            21 * 60,
-        )
-
         connection.execute(
-            """
-            INSERT INTO users (
-                user_id,
-                notification_date,
-                notification_minute
-            )
-            VALUES (?, ?, ?)
-            """,
-            (
-                user_id,
-                today,
-                notification_minute,
-            ),
+            "INSERT INTO users (user_id, notification_at) VALUES (?, ?)",
+            (user_id, _random_next_notification_iso()),
         )
-
-    # -----------------------------------------------------
-    # Пользователь уже есть,
-    # но расписание отсутствует
-    # -----------------------------------------------------
-
-    elif (
-        row["notification_date"] is None
-        or row["notification_minute"] is None
-    ):
-
-        notification_minute = random.randint(
-            10 * 60,
-            21 * 60,
-        )
-
+    elif not row["notification_at"]:
         connection.execute(
-            """
-            UPDATE users
-            SET
-                notification_date = ?,
-                notification_minute = ?,
-                updated_at = CURRENT_TIMESTAMP
-            WHERE user_id = ?
-            """,
-            (
-                today,
-                notification_minute,
-                user_id,
-            ),
+            "UPDATE users SET notification_at = ?, updated_at = CURRENT_TIMESTAMP WHERE user_id = ?",
+            (_random_next_notification_iso(), user_id),
         )
-
     connection.commit()
-
     connection.close()
 
 
-def get_due_notification_users(
-    date_iso: str,
-    current_minute: int,
-):
-    """
-    Возвращает пользователей,
-    которым уже пора отправить
-    сегодняшнее уведомление.
-    """
-
+def get_due_notification_users(now_iso: str):
     connection = get_connection()
-
     rows = connection.execute(
-        """
-        SELECT user_id
-        FROM users
-        WHERE notification_date < ?
-           OR (notification_date = ? AND notification_minute <= ?)
-        ORDER BY user_id
-        """,
-        (
-            date_iso,
-            date_iso,
-            current_minute,
-        ),
+        "SELECT user_id FROM users WHERE notification_at IS NOT NULL AND datetime(notification_at) <= datetime(?) ORDER BY user_id",
+        (now_iso,),
     ).fetchall()
-
     connection.close()
-
-    return [
-        row["user_id"]
-        for row in rows
-    ]
+    return [row["user_id"] for row in rows]
 
 
-def mark_notification_sent(
-    user_id: int,
-    next_date_iso: str,
-    next_minute: int,
-):
-    """
-    После отправки уведомления
-    переносим следующее уведомление
-    на следующий день.
-    """
-
+def mark_notification_sent(user_id: int):
     connection = get_connection()
-
     connection.execute(
-        """
-        UPDATE users
-        SET
-            notification_date = ?,
-            notification_minute = ?,
-            updated_at = CURRENT_TIMESTAMP
-        WHERE user_id = ?
-        """,
-        (
-            next_date_iso,
-            next_minute,
-            user_id,
-        ),
+        "UPDATE users SET notification_at = ?, updated_at = CURRENT_TIMESTAMP WHERE user_id = ?",
+        (_random_next_notification_iso(), user_id),
     )
-
     connection.commit()
-
     connection.close()
 
 
@@ -447,7 +440,6 @@ def get_extended_stats():
     stats["published_today"] = published_today
     stats["rejected_today"] = rejected_today
     stats["avg_dialog_messages"] = round(float(avg_dialog_messages or 0), 1)
-    stats["feedback"] = get_feedback_stats()
     return stats
 
 # =========================================================
@@ -491,23 +483,23 @@ def update_ai_result(
     story_id: int,
     ai_result: str,
 ):
+    import re
+
+    category = None
+    match = re.search(r"🏷\s*Тема:\s*([^\n]+)", ai_result or "")
+    if match:
+        category = match.group(1).strip()
 
     connection = get_connection()
-
     connection.execute(
         """
         UPDATE stories
-        SET ai_result = ?
+        SET ai_result = ?, category = ?
         WHERE id = ?
         """,
-        (
-            ai_result,
-            story_id,
-        ),
+        (ai_result, category, story_id),
     )
-
     connection.commit()
-
     connection.close()
 
 
@@ -596,6 +588,7 @@ def get_waiting_stories():
         SELECT *
         FROM stories
         WHERE status = 'waiting'
+          AND scheduled_at IS NULL
         ORDER BY id DESC
         """
     ).fetchall()
@@ -668,70 +661,355 @@ def get_stats():
 
 
 # =========================================================
-# SUPPORT
+# REACTIONS
 # =========================================================
 
-def detect_dialog_priority(text: str) -> int:
-    text = (text or "").lower()
-    urgent = (
-        "суицид", "самоуб", "убить себя", "не хочу жить",
-        "покончу", "порежу себя", "опасно", "угрожают",
-        "насилие", "избивают", "угрожает жизни", "кровь",
-    )
-    high = (
-        "паническая атака", "паника", "не могу справиться",
-        "срочно", "очень плохо", "кризис", "страшно",
-    )
-    if any(x in text for x in urgent):
-        return 3
-    if any(x in text for x in high):
-        return 2
-    return 1
+def set_story_reaction(story_id: int, user_id: int, reaction: str | None):
+    connection = get_connection()
+    if reaction is None:
+        connection.execute(
+            "DELETE FROM story_reactions WHERE story_id = ? AND user_id = ?",
+            (story_id, user_id),
+        )
+    else:
+        connection.execute(
+            """
+            INSERT INTO story_reactions (story_id, user_id, reaction)
+            VALUES (?, ?, ?)
+            ON CONFLICT(story_id, user_id)
+            DO UPDATE SET reaction = excluded.reaction
+            """,
+            (story_id, user_id, reaction),
+        )
+    connection.commit()
+    connection.close()
 
 
-def log_admin_action(admin_id: int, action: str, entity_type: str, entity_id: int | None = None, details: str | None = None):
+def get_story_reaction_counts(story_id: int):
+    connection = get_connection()
+    rows = connection.execute(
+        """
+        SELECT reaction, COUNT(*) AS count
+        FROM story_reactions
+        WHERE story_id = ?
+        GROUP BY reaction
+        """,
+        (story_id,),
+    ).fetchall()
+    connection.close()
+    result = {"heart": 0, "understand": 0, "support": 0}
+    for row in rows:
+        result[row["reaction"]] = row["count"]
+    return result
+
+
+def get_user_story_reaction(story_id: int, user_id: int):
+    connection = get_connection()
+    row = connection.execute(
+        "SELECT reaction FROM story_reactions WHERE story_id = ? AND user_id = ?",
+        (story_id, user_id),
+    ).fetchone()
+    connection.close()
+    return row["reaction"] if row else None
+
+
+def get_total_reactions():
+    connection = get_connection()
+    row = connection.execute("SELECT COUNT(*) AS count FROM story_reactions").fetchone()
+    connection.close()
+    return row["count"] if row else 0
+
+
+# =========================================================
+# AI MODERATION RESULT
+# =========================================================
+
+def update_ai_moderation_result(story_id: int, result: str):
     connection = get_connection()
     connection.execute(
-        """INSERT INTO audit_logs (admin_id, action, entity_type, entity_id, details)
-           VALUES (?, ?, ?, ?, ?)""",
-        (admin_id, action, entity_type, entity_id, details),
+        "UPDATE stories SET ai_moderation_result = ? WHERE id = ?",
+        (result, story_id),
     )
     connection.commit()
     connection.close()
 
 
-def get_audit_logs(limit: int = 50):
+def get_ai_moderation_result(story_id: int):
+    connection = get_connection()
+    row = connection.execute(
+        "SELECT ai_moderation_result FROM stories WHERE id = ?",
+        (story_id,),
+    ).fetchone()
+    connection.close()
+    return row["ai_moderation_result"] if row else None
+
+
+# =========================================================
+# ADMIN AUDIT LOG
+# =========================================================
+
+def log_admin_action(
+    admin_id: int,
+    action: str,
+    story_id: int | None = None,
+    dialog_id: int | None = None,
+    user_id: int | None = None,
+    details: str | None = None,
+):
+    connection = get_connection()
+    connection.execute(
+        """
+        INSERT INTO admin_audit_log
+            (admin_id, action, story_id, dialog_id, user_id, details)
+        VALUES (?, ?, ?, ?, ?, ?)
+        """,
+        (admin_id, action, story_id, dialog_id, user_id, details),
+    )
+    connection.commit()
+    connection.close()
+
+
+def get_admin_audit(limit: int = 50):
     connection = get_connection()
     rows = connection.execute(
-        """SELECT * FROM audit_logs ORDER BY id DESC LIMIT ?""",
+        """
+        SELECT *
+        FROM admin_audit_log
+        ORDER BY id DESC
+        LIMIT ?
+        """,
         (limit,),
     ).fetchall()
     connection.close()
     return rows
 
 
-def save_support_feedback(dialog_id: int, user_id: int, rating: int, comment: str | None = None):
-    rating = max(1, min(5, int(rating)))
+def get_reaction_stats():
+    connection = get_connection()
+    rows = connection.execute(
+        """
+        SELECT reaction, COUNT(*) AS count
+        FROM story_reactions
+        GROUP BY reaction
+        """
+    ).fetchall()
+    connection.close()
+    result = {"heart": 0, "understand": 0, "support": 0}
+    for row in rows:
+        result[row["reaction"]] = row["count"]
+    return result
+
+
+# =========================================================
+# SCHEDULED PUBLICATIONS (W)
+# =========================================================
+
+def schedule_story(story_id: int, scheduled_at: str, admin_id: int):
+    connection = get_connection()
+    cursor = connection.execute(
+        """
+        UPDATE stories
+        SET scheduled_at = ?, scheduled_by = ?
+        WHERE id = ? AND status = 'waiting'
+        """,
+        (scheduled_at, admin_id, story_id),
+    )
+    connection.commit()
+    changed = cursor.rowcount > 0
+    connection.close()
+    return changed
+
+
+def cancel_scheduled_story(story_id: int):
+    connection = get_connection()
+    cursor = connection.execute(
+        """
+        UPDATE stories
+        SET scheduled_at = NULL, scheduled_by = NULL
+        WHERE id = ? AND status = 'waiting'
+        """,
+        (story_id,),
+    )
+    connection.commit()
+    changed = cursor.rowcount > 0
+    connection.close()
+    return changed
+
+
+def get_scheduled_stories(limit: int = 100):
+    connection = get_connection()
+    rows = connection.execute(
+        """
+        SELECT * FROM stories
+        WHERE status = 'waiting' AND scheduled_at IS NOT NULL
+        ORDER BY datetime(scheduled_at) ASC
+        LIMIT ?
+        """,
+        (limit,),
+    ).fetchall()
+    connection.close()
+    return rows
+
+
+def get_due_scheduled_stories(now_iso: str, limit: int = 20):
+    connection = get_connection()
+    rows = connection.execute(
+        """
+        SELECT * FROM stories
+        WHERE status = 'waiting'
+          AND scheduled_at IS NOT NULL
+          AND datetime(scheduled_at) <= datetime(?)
+        ORDER BY datetime(scheduled_at) ASC
+        LIMIT ?
+        """,
+        (now_iso, limit),
+    ).fetchall()
+    connection.close()
+    return rows
+
+
+def claim_scheduled_story(story_id: int):
+    connection = get_connection()
+    cursor = connection.execute(
+        """
+        UPDATE stories
+        SET status = 'publishing'
+        WHERE id = ? AND status = 'waiting' AND scheduled_at IS NOT NULL
+        """,
+        (story_id,),
+    )
+    connection.commit()
+    changed = cursor.rowcount > 0
+    connection.close()
+    return changed
+
+
+def release_scheduled_story(story_id: int, retry_at: str):
     connection = get_connection()
     connection.execute(
-        """INSERT INTO support_feedback (dialog_id, user_id, rating, comment)
-           VALUES (?, ?, ?, ?)
-           ON CONFLICT(dialog_id) DO UPDATE SET rating=excluded.rating, comment=excluded.comment""",
-        (dialog_id, user_id, rating, comment),
+        """
+        UPDATE stories
+        SET status = 'waiting', scheduled_at = ?
+        WHERE id = ? AND status = 'publishing'
+        """,
+        (retry_at, story_id),
     )
     connection.commit()
     connection.close()
 
 
-def get_feedback_stats():
+def get_analytics():
     connection = get_connection()
-    row = connection.execute(
-        """SELECT COUNT(*) AS count, COALESCE(AVG(rating), 0) AS avg_rating
-           FROM support_feedback"""
-    ).fetchone()
+    total_users = connection.execute("SELECT COUNT(*) FROM users").fetchone()[0]
+    total_stories = connection.execute("SELECT COUNT(*) FROM stories").fetchone()[0]
+    published = connection.execute("SELECT COUNT(*) FROM stories WHERE status = 'published'").fetchone()[0]
+    rejected = connection.execute("SELECT COUNT(*) FROM stories WHERE status = 'rejected'").fetchone()[0]
+    waiting = connection.execute("SELECT COUNT(*) FROM stories WHERE status = 'waiting' AND scheduled_at IS NULL").fetchone()[0]
+    scheduled = connection.execute("SELECT COUNT(*) FROM stories WHERE status = 'waiting' AND scheduled_at IS NOT NULL").fetchone()[0]
+    publishing = connection.execute("SELECT COUNT(*) FROM stories WHERE status = 'publishing'").fetchone()[0]
+    reactions = connection.execute("SELECT COUNT(*) FROM story_reactions").fetchone()[0]
+    dialogs = connection.execute("SELECT COUNT(*) FROM support_dialogs").fetchone()[0]
+    open_dialogs = connection.execute("SELECT COUNT(*) FROM support_dialogs WHERE status = 'open'").fetchone()[0]
+    messages = connection.execute("SELECT COUNT(*) FROM support_messages").fetchone()[0]
+    categories = connection.execute(
+        """SELECT COALESCE(category, 'Не определена') AS category, COUNT(*) AS count
+           FROM stories GROUP BY category ORDER BY count DESC LIMIT 10"""
+    ).fetchall()
+    daily = connection.execute(
+        """SELECT date(created_at) AS day, COUNT(*) AS count
+           FROM stories WHERE created_at >= date('now', '-6 days')
+           GROUP BY date(created_at) ORDER BY day ASC"""
+    ).fetchall()
     connection.close()
-    return {"count": row["count"], "avg_rating": round(float(row["avg_rating"] or 0), 2)}
+    return {
+        'users': total_users,
+        'stories': total_stories,
+        'published': published,
+        'rejected': rejected,
+        'waiting': waiting,
+        'scheduled': scheduled,
+        'publishing': publishing,
+        'reactions': reactions,
+        'dialogs': dialogs,
+        'open_dialogs': open_dialogs,
+        'messages': messages,
+        'categories': categories,
+        'daily': daily,
+    }
 
+
+# =========================================================
+# BACKUPS (X)
+# =========================================================
+
+def backup_database(backup_dir: str | None = None):
+    from datetime import datetime
+    import shutil
+
+    target_dir = Path(backup_dir or os.getenv('BACKUP_DIR', '') or '/app/data/backups')
+    target_dir.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.utcnow().strftime('%Y%m%d_%H%M%S')
+    target = target_dir / f'bot_{stamp}.db'
+
+    source = get_connection()
+    destination = sqlite3.connect(target)
+    try:
+        source.backup(destination)
+    finally:
+        destination.close()
+        source.close()
+
+    # Keep latest 14 backups.
+    backups = sorted(target_dir.glob('bot_*.db'), key=lambda x: x.stat().st_mtime, reverse=True)
+    for old in backups[14:]:
+        try:
+            old.unlink()
+        except OSError:
+            pass
+    return str(target)
+
+# =========================================================
+# ADMIN ROLES (Z)
+# =========================================================
+
+def ensure_admin_roles(admin_ids):
+    connection = get_connection()
+    for user_id in admin_ids:
+        connection.execute(
+            "INSERT OR IGNORE INTO admin_roles (user_id, role) VALUES (?, ?)",
+            (user_id, "owner" if user_id == admin_ids[0] else "moderator"),
+        )
+    connection.commit()
+    connection.close()
+
+
+def get_admin_role(user_id: int) -> str:
+    connection = get_connection()
+    row = connection.execute("SELECT role FROM admin_roles WHERE user_id = ?", (user_id,)).fetchone()
+    connection.close()
+    return row["role"] if row else "moderator"
+
+
+def set_admin_role(user_id: int, role: str):
+    connection = get_connection()
+    connection.execute(
+        "INSERT INTO admin_roles (user_id, role) VALUES (?, ?) ON CONFLICT(user_id) DO UPDATE SET role=excluded.role, updated_at=CURRENT_TIMESTAMP",
+        (user_id, role),
+    )
+    connection.commit()
+    connection.close()
+
+
+def get_admin_roles():
+    connection = get_connection()
+    rows = connection.execute("SELECT user_id, role, created_at, updated_at FROM admin_roles ORDER BY user_id").fetchall()
+    connection.close()
+    return rows
+
+
+# =========================================================
+# SUPPORT
+# =========================================================
 
 def create_support_dialog(
     user_id: int,
@@ -749,7 +1027,6 @@ def create_support_dialog(
             first_message,
             status,
             support_status,
-            priority,
             unread_admin
         )
         VALUES (
@@ -757,14 +1034,12 @@ def create_support_dialog(
             ?,
             'open',
             'new',
-            ?,
             1
         )
         """,
         (
             user_id,
             first_message,
-            detect_dialog_priority(first_message),
         ),
     )
 
@@ -898,12 +1173,10 @@ def add_support_message(
             UPDATE support_dialogs
             SET
                 unread_admin = unread_admin + 1,
-                priority = MAX(priority, ?),
                 updated_at = CURRENT_TIMESTAMP
             WHERE id = ?
             """,
             (
-                detect_dialog_priority(text),
                 dialog_id,
             ),
         )
@@ -944,7 +1217,7 @@ def get_open_dialogs():
             ) AS last_message
         FROM support_dialogs d
         WHERE d.status = 'open'
-        ORDER BY d.priority DESC, d.updated_at DESC
+        ORDER BY d.updated_at DESC
         """
     ).fetchall()
 
@@ -1174,3 +1447,122 @@ def request_personal_contact(
     connection.close()
 
     return True
+
+
+# =========================================================
+# COMPLAINTS / SUPPORT PRIORITY / SLA / MINI APP
+# =========================================================
+
+def create_complaint(story_id: int, user_id: int, reason: str):
+    con = get_connection()
+    cur = con.execute("""
+        INSERT OR IGNORE INTO story_complaints(story_id,user_id,reason) VALUES(?,?,?)
+    """, (story_id, user_id, reason.strip()[:500]))
+    con.commit()
+    row = con.execute("SELECT * FROM story_complaints WHERE story_id=? AND user_id=?", (story_id,user_id)).fetchone()
+    con.close()
+    return row
+
+
+def get_complaints(status: str | None = None, limit: int = 100):
+    con=get_connection()
+    if status:
+        rows=con.execute("SELECT * FROM story_complaints WHERE status=? ORDER BY created_at DESC LIMIT ?",(status,limit)).fetchall()
+    else:
+        rows=con.execute("SELECT * FROM story_complaints ORDER BY created_at DESC LIMIT ?",(limit,)).fetchall()
+    con.close(); return rows
+
+
+def update_complaint(complaint_id: int, status: str | None=None, priority: str | None=None, assigned_admin_id: int | None=None):
+    con=get_connection(); fields=[]; vals=[]
+    if status is not None: fields.append('status=?'); vals.append(status)
+    if priority is not None: fields.append('priority=?'); vals.append(priority)
+    if assigned_admin_id is not None: fields.append('assigned_admin_id=?'); vals.append(assigned_admin_id)
+    fields.append('updated_at=CURRENT_TIMESTAMP')
+    vals.append(complaint_id)
+    con.execute(f"UPDATE story_complaints SET {', '.join(fields)} WHERE id=?", vals); con.commit(); con.close()
+
+
+def save_story_version(story_id:int, changed_by:int, change_type:str):
+    con=get_connection()
+    row=con.execute('SELECT text, post_text FROM stories WHERE id=?',(story_id,)).fetchone()
+    if not row: con.close(); return None
+    n=con.execute('SELECT COALESCE(MAX(version_no),0)+1 FROM story_versions WHERE story_id=?',(story_id,)).fetchone()[0]
+    con.execute('INSERT INTO story_versions(story_id,version_no,text,post_text,changed_by,change_type) VALUES(?,?,?,?,?,?)',(story_id,n,row['text'],row['post_text'],changed_by,change_type))
+    con.commit(); out=con.execute('SELECT * FROM story_versions WHERE story_id=? AND version_no=?',(story_id,n)).fetchone(); con.close(); return out
+
+
+def get_story_versions(story_id:int):
+    con=get_connection(); rows=con.execute('SELECT * FROM story_versions WHERE story_id=? ORDER BY version_no DESC',(story_id,)).fetchall(); con.close(); return rows
+
+
+def restore_story_version(version_id:int, admin_id:int):
+    con=get_connection(); row=con.execute('SELECT * FROM story_versions WHERE id=?',(version_id,)).fetchone()
+    if not row: con.close(); return None
+    save_story_version(row['story_id'], admin_id, 'before_restore')
+    con.execute('UPDATE stories SET text=?, post_text=? WHERE id=?',(row['text'],row['post_text'],row['story_id']))
+    con.commit(); story=con.execute('SELECT * FROM stories WHERE id=?',(row['story_id'],)).fetchone(); con.close(); return story
+
+
+def set_support_priority(dialog_id:int, priority:str):
+    priority = priority if priority in {'critical','high','normal','low'} else 'normal'
+    con=get_connection()
+    con.execute("INSERT INTO support_sla(dialog_id,priority,first_response_due_at) VALUES(?,?,datetime('now',?)) ON CONFLICT(dialog_id) DO UPDATE SET priority=excluded.priority", (dialog_id,priority, {'critical':'+15 minutes','high':'+30 minutes','normal':'+2 hours','low':'+8 hours'}[priority]))
+    con.commit(); con.close()
+
+
+def get_support_priority(dialog_id:int):
+    con=get_connection(); row=con.execute('SELECT * FROM support_sla WHERE dialog_id=?',(dialog_id,)).fetchone(); con.close(); return row
+
+
+def get_sla_breaches():
+    con=get_connection(); rows=con.execute("""SELECT d.*, COALESCE(s.priority,'normal') priority, s.first_response_due_at
+      FROM support_dialogs d LEFT JOIN support_sla s ON s.dialog_id=d.id
+      WHERE d.status='open' AND s.first_response_due_at IS NOT NULL AND datetime(s.first_response_due_at)<datetime('now')
+      AND d.support_status='new' ORDER BY s.first_response_due_at ASC""").fetchall(); con.close(); return rows
+
+
+def add_admin_notification(admin_id:int, kind:str, title:str, body:str):
+    con=get_connection(); con.execute('INSERT INTO admin_notifications(admin_id,kind,title,body) VALUES(?,?,?,?)',(admin_id,kind,title,body)); con.commit(); con.close()
+
+
+def get_admin_notifications(admin_id:int, unread_only:bool=False, limit:int=50):
+    con=get_connection(); q='SELECT * FROM admin_notifications WHERE admin_id=?'
+    params=[admin_id]
+    if unread_only: q+=' AND read_at IS NULL'
+    q+=' ORDER BY created_at DESC LIMIT ?'; params.append(limit)
+    rows=con.execute(q,params).fetchall(); con.close(); return rows
+
+
+def mark_admin_notification_read(notification_id:int, admin_id:int):
+    con=get_connection(); con.execute('UPDATE admin_notifications SET read_at=CURRENT_TIMESTAMP WHERE id=? AND admin_id=?',(notification_id,admin_id)); con.commit(); con.close()
+
+
+def get_moderator_metrics(days:int=30):
+    con=get_connection(); rows=con.execute("""SELECT admin_id, action, COUNT(*) count FROM admin_audit_log WHERE created_at>=datetime('now',?) GROUP BY admin_id,action ORDER BY count DESC""",(f'-{days} days',)).fetchall(); con.close(); return rows
+
+
+def get_top_stories(limit:int=10):
+    con=get_connection(); rows=con.execute("""SELECT s.id,s.category,s.created_at,COUNT(r.id) reactions
+      FROM stories s LEFT JOIN story_reactions r ON r.story_id=s.id
+      WHERE s.status='published' GROUP BY s.id ORDER BY reactions DESC,s.id DESC LIMIT ?""",(limit,)).fetchall(); con.close(); return rows
+
+
+def get_user_retention():
+    con=get_connection(); rows=con.execute("""SELECT COUNT(*) total, SUM(CASE WHEN date(created_at)>=date('now','-1 day') THEN 1 ELSE 0 END) d1, SUM(CASE WHEN date(created_at)>=date('now','-7 day') THEN 1 ELSE 0 END) d7, SUM(CASE WHEN date(created_at)>=date('now','-30 day') THEN 1 ELSE 0 END) d30 FROM users""").fetchone(); con.close(); return rows
+
+
+def update_story_content(story_id: int, text: str, post_text: str, admin_id: int):
+    save_story_version(story_id, admin_id, 'edit')
+    con = get_connection()
+    con.execute('UPDATE stories SET text=?, post_text=? WHERE id=?', (text, post_text, story_id))
+    con.commit(); row=con.execute('SELECT * FROM stories WHERE id=?',(story_id,)).fetchone(); con.close(); return row
+
+
+def create_event_notification_once(admin_id:int, kind:str, title:str, body:str, fingerprint:str):
+    con=get_connection()
+    row=con.execute("SELECT id FROM admin_notifications WHERE admin_id=? AND kind=? AND body=? AND created_at>=datetime('now','-2 days') LIMIT 1",(admin_id,kind,fingerprint)).fetchone()
+    if row:
+        con.close(); return False
+    con.execute('INSERT INTO admin_notifications(admin_id,kind,title,body) VALUES(?,?,?,?)',(admin_id,kind,title,body))
+    con.commit(); con.close(); return True
