@@ -1,5 +1,8 @@
+import os
+
 from aiogram.types import (
     ReplyKeyboardMarkup,
+    WebAppInfo,
     KeyboardButton,
     InlineKeyboardMarkup,
     InlineKeyboardButton,
@@ -32,17 +35,16 @@ admin_user_keyboard = ReplyKeyboardMarkup(
 admin_keyboard = ReplyKeyboardMarkup(
     keyboard=[
         [KeyboardButton(text="⏳ Модерация"), KeyboardButton(text="📊 Статистика")],
-        [KeyboardButton(text="💬 Диалоги")],
+        [KeyboardButton(text="📈 Аналитика"), KeyboardButton(text="💬 Диалоги")],
+        [KeyboardButton(text="🗓 Планировщик") , KeyboardButton(text="📜 Журнал действий")],
         [KeyboardButton(text="📁 Все истории")],
-        [KeyboardButton(text="📚 Публикации"), KeyboardButton(text="⭐ Избранное")],
-        [KeyboardButton(text="👥 Пользователи")],
-        [KeyboardButton(text="🔎 Поиск"), KeyboardButton(text="📈 Аналитика")],
+        [KeyboardButton(text="👥 Роли администраторов")],
+        *([[KeyboardButton(text="🖥 Mini App", web_app=WebAppInfo(url=os.getenv("ADMIN_MINIAPP_URL", "")))]] if os.getenv("ADMIN_MINIAPP_URL") else []),
         [KeyboardButton(text="👤 Режим пользователя")],
         [KeyboardButton(text="⬅️ Назад")],
     ],
     resize_keyboard=True,
 )
-
 
 def support_method_keyboard():
     return InlineKeyboardMarkup(inline_keyboard=[
@@ -63,7 +65,12 @@ def material_actions_keyboard():
     ])
 
 
-def moderation_keyboard(story_id: int, user_id: int):
+def moderation_keyboard(story_id: int, user_id: int, scheduled: bool = False):
+    schedule_row = [
+        InlineKeyboardButton(text="❌ Снять расписание", callback_data=f"schedule_cancel:{story_id}")
+    ] if scheduled else [
+        InlineKeyboardButton(text="🗓 Запланировать", callback_data=f"schedule:{story_id}")
+    ]
     return InlineKeyboardMarkup(inline_keyboard=[
         [
             InlineKeyboardButton(text="✏️ Изменить", callback_data=f"edit:{story_id}"),
@@ -71,32 +78,42 @@ def moderation_keyboard(story_id: int, user_id: int):
         ],
         [
             InlineKeyboardButton(text="👀 Предпросмотр", callback_data=f"preview:{story_id}"),
-            InlineKeyboardButton(text="⭐ Избранное", callback_data=f"favorite:{story_id}"),
-        ],
-        [InlineKeyboardButton(text="🤖 Проверка ИИ", callback_data=f"ai_review:{story_id}"),
             InlineKeyboardButton(text="✅ Опубликовать", callback_data=f"publish:{story_id}"),
         ],
-        [InlineKeyboardButton(text="❌ Отклонить", callback_data=f"reject:{story_id}")],
+        [InlineKeyboardButton(text="❌ Отклонить", callback_data=f"reject:{story_id}"), InlineKeyboardButton(text="🛡 Проверка ИИ", callback_data=f"ai_moderate:{story_id}")],
         [InlineKeyboardButton(text="👤 Написать пользователю", callback_data=f"contact:{story_id}")],
+        schedule_row,
     ])
 
 
-def moderation_cancel_keyboard(action: str, story_id: int):
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="❌ Отмена", callback_data=f"{action}_cancel:{story_id}")]
-    ])
+def _reaction_buttons(story_id: int, counts: dict | None = None, selected: str | None = None):
+    counts = counts or {"heart": 0, "understand": 0, "support": 0}
+
+    def label(key, emoji):
+        mark = " ✓" if selected == key else ""
+        return f"{emoji} {counts.get(key, 0)}{mark}"
+
+    return [
+        InlineKeyboardButton(text=label("heart", "❤️"), callback_data=f"reaction:{story_id}:heart"),
+        InlineKeyboardButton(text=label("understand", "💙"), callback_data=f"reaction:{story_id}:understand"),
+        InlineKeyboardButton(text=label("support", "🤝"), callback_data=f"reaction:{story_id}:support"),
+    ]
 
 
-def user_profile_keyboard(user_id: int):
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="💬 Открыть диалог", callback_data=f"user_dialog:{user_id}")],
-    ])
+def channel_story_keyboard(story_id: int, message_link: str | None = None, counts: dict | None = None, selected: str | None = None):
+    buttons = [_reaction_buttons(story_id, counts, selected)]
+    if message_link:
+        buttons.append([InlineKeyboardButton(text="👀 Посмотреть", url=message_link)])
+    buttons.append([InlineKeyboardButton(text="⚠️ Пожаловаться", callback_data=f"complaint:{story_id}")])
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
-def published_story_keyboard(message_link: str):
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="👀 Посмотреть", url=message_link)],
-    ])
+def published_story_keyboard(message_link: str, story_id: int | None = None, counts: dict | None = None):
+    rows = []
+    if story_id is not None:
+        rows.append(_reaction_buttons(story_id, counts))
+    rows.append([InlineKeyboardButton(text="👀 Посмотреть", url=message_link)])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def support_new_message_keyboard(dialog_id: int):
@@ -108,7 +125,6 @@ def support_new_message_keyboard(dialog_id: int):
 
 def support_dialog_keyboard(dialog_id: int):
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="👤 Профиль пользователя", callback_data=f"dialog_user:{dialog_id}")],
         [InlineKeyboardButton(text="📞 Связаться лично", callback_data=f"dialog_personal:{dialog_id}")],
         [InlineKeyboardButton(text="🟠 Ожидает пользователя", callback_data=f"dialog_waiting:{dialog_id}")],
         [InlineKeyboardButton(text="🟢 Решён", callback_data=f"dialog_resolved:{dialog_id}")],
@@ -124,7 +140,11 @@ def personal_request_keyboard(dialog_id: int, user_id: int):
     ])
 
 
-def emergency_support_keyboard():
+def schedule_keyboard(story_id: int):
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🆘 Экстренная поддержка", callback_data="open_emergency_support")]
+        [InlineKeyboardButton(text="⏰ Через 1 час", callback_data=f"schedule_set:{story_id}:1h")],
+        [InlineKeyboardButton(text="⏰ Через 3 часа", callback_data=f"schedule_set:{story_id}:3h")],
+        [InlineKeyboardButton(text="🌅 Завтра 12:00", callback_data=f"schedule_set:{story_id}:tomorrow")],
+        [InlineKeyboardButton(text="🕐 Указать любое время", callback_data=f"schedule_custom:{story_id}")],
+        [InlineKeyboardButton(text="❌ Отмена", callback_data=f"schedule_cancel_ui:{story_id}")],
     ])
