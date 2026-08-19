@@ -316,7 +316,7 @@ async def view_stories(
 # ADMIN MODE
 # =========================================================
 
-@router.message(F.text == "👨‍💼 Админ-панель")
+@router.message(F.text.in_({"👨‍💼 Админ-панель", "🧰 Резервная админ-панель"}))
 async def switch_to_admin_mode(
     message: Message,
     state: FSMContext,
