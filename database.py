@@ -270,6 +270,8 @@ def init_db():
             "personal_contact_requested": "INTEGER DEFAULT 0",
             "admin_control_chat_id": "INTEGER",
             "admin_control_message_id": "INTEGER",
+            "first_response_at": "TIMESTAMP",
+            "resolved_at": "TIMESTAMP",
             "created_at": "TIMESTAMP DEFAULT CURRENT_TIMESTAMP",
             "updated_at": "TIMESTAMP",
         },
@@ -281,6 +283,7 @@ def init_db():
             "created_at": "TIMESTAMP DEFAULT CURRENT_TIMESTAMP",
             "updated_at": "TIMESTAMP DEFAULT CURRENT_TIMESTAMP",
         },
+
 
         "admin_roles": {
             "role": "TEXT DEFAULT 'moderator'",
@@ -347,46 +350,10 @@ def _random_next_notification_iso():
     import random
     from datetime import datetime, timedelta
     from zoneinfo import ZoneInfo
-
-    tz = ZoneInfo("Europe/Moscow")
-
-    now = datetime.now(tz)
-
-    # Ровно один раз в сутки.
-    # Для следующего календарного дня
-    # выбирается случайное время по Москве.
-
-    next_day = (
-        now.date()
-        + timedelta(days=1)
-    )
-
-    hour = random.randint(
-        0,
-        23,
-    )
-
-    minute = random.randint(
-        0,
-        59,
-    )
-
-    second = random.randint(
-        0,
-        59,
-    )
-
-    target = datetime(
-        next_day.year,
-        next_day.month,
-        next_day.day,
-        hour,
-        minute,
-        second,
-        tzinfo=tz,
-    )
-
-    return target.isoformat()
+    now = datetime.now(ZoneInfo("Europe/Oslo"))
+    # Случайное время примерно раз в 24 часа: от 23 до 25 часов после предыдущего.
+    seconds = random.randint(23 * 3600, 25 * 3600)
+    return (now + timedelta(seconds=seconds)).isoformat()
 
 
 def register_user(user_id: int):
@@ -1602,3 +1569,125 @@ def create_event_notification_once(admin_id:int, kind:str, title:str, body:str, 
         con.close(); return False
     con.execute('INSERT INTO admin_notifications(admin_id,kind,title,body) VALUES(?,?,?,?)',(admin_id,kind,title,body))
     con.commit(); con.close(); return True
+
+
+# =========================================================
+# BP / BR / BS / BT / BU / BW / BX / BY / BZ / CF / CH / CI
+# =========================================================
+
+def get_support_metrics():
+    con=get_connection()
+    row=con.execute("""
+        SELECT
+          COUNT(*) AS total,
+          SUM(CASE WHEN status='open' THEN 1 ELSE 0 END) AS open_count,
+          AVG(CASE WHEN first_response_at IS NOT NULL
+              THEN (julianday(first_response_at)-julianday(created_at))*86400 END) AS avg_first_response_seconds,
+          AVG(CASE WHEN resolved_at IS NOT NULL
+              THEN (julianday(resolved_at)-julianday(created_at))*86400 END) AS avg_resolution_seconds
+        FROM support_dialogs
+    """).fetchone()
+    con.close(); return row
+
+
+def get_support_queue():
+    con=get_connection()
+    rows=con.execute("""
+      SELECT d.*, COALESCE(s.priority,'normal') AS priority,
+        CASE WHEN d.assigned_admin_id IS NULL THEN 'unassigned' ELSE 'assigned' END AS assignment_status
+      FROM support_dialogs d LEFT JOIN support_sla s ON s.dialog_id=d.id
+      WHERE d.status='open' ORDER BY d.created_at ASC LIMIT 200
+    """).fetchall(); con.close(); return rows
+
+
+def get_category_stats():
+    con=get_connection(); rows=con.execute("""
+      SELECT COALESCE(NULLIF(category,''),'Без категории') category,
+             COUNT(*) stories,
+             SUM(CASE WHEN status='published' THEN 1 ELSE 0 END) published
+      FROM stories GROUP BY COALESCE(NULLIF(category,''),'Без категории')
+      ORDER BY stories DESC
+    """).fetchall(); con.close(); return rows
+
+
+def get_publication_hour_stats():
+    con=get_connection(); rows=con.execute("""
+      SELECT CAST(strftime('%H', created_at) AS INTEGER) hour, COUNT(*) count
+      FROM stories WHERE status='published' AND channel_message_id IS NOT NULL
+      GROUP BY hour ORDER BY hour
+    """).fetchall(); con.close(); return rows
+
+
+def get_funnel_stats():
+    con=get_connection()
+    users=con.execute('SELECT COUNT(*) c FROM users').fetchone()['c']
+    stories=con.execute('SELECT COUNT(*) c FROM stories').fetchone()['c']
+    published=con.execute("SELECT COUNT(*) c FROM stories WHERE status='published'").fetchone()['c']
+    support=con.execute('SELECT COUNT(DISTINCT user_id) c FROM support_dialogs').fetchone()['c']
+    con.close(); return {'users':users,'stories':stories,'published':published,'support_users':support}
+
+
+def get_security_events(limit=300):
+    con=get_connection(); rows=con.execute("""
+      SELECT id,admin_id,action,story_id,dialog_id,user_id,details,created_at
+      FROM admin_audit_log ORDER BY id DESC LIMIT ?
+    """,(limit,)).fetchall(); con.close(); return rows
+
+
+def get_publication_queue():
+    con=get_connection(); rows=con.execute("""
+      SELECT id,user_id,status,scheduled_at,scheduled_by,post_text,created_at
+      FROM stories WHERE scheduled_at IS NOT NULL AND status IN ('waiting','scheduled','publishing')
+      ORDER BY scheduled_at ASC LIMIT 200
+    """).fetchall(); con.close(); return rows
+
+
+def auto_plan_stories(story_ids, start_at_utc, interval_minutes, admin_id):
+    from datetime import datetime, timedelta
+    current=datetime.fromisoformat(start_at_utc.replace('Z','+00:00'))
+    if current.tzinfo is None:
+        from zoneinfo import ZoneInfo
+        current=current.replace(tzinfo=ZoneInfo('UTC'))
+    result=[]
+    con=get_connection()
+    for sid in story_ids:
+        con.execute("UPDATE stories SET scheduled_at=?, scheduled_by=? WHERE id=? AND status='waiting'",
+                    (current.isoformat(),admin_id,sid))
+        result.append({'id':sid,'scheduled_at':current.isoformat()})
+        current += timedelta(minutes=interval_minutes)
+    con.commit(); con.close(); return result
+
+
+def create_repost_job(story_id, scheduled_at_utc, admin_id):
+    con=get_connection()
+    con.execute("""CREATE TABLE IF NOT EXISTS repost_jobs(
+      id INTEGER PRIMARY KEY AUTOINCREMENT, story_id INTEGER NOT NULL,
+      scheduled_at TEXT NOT NULL, admin_id INTEGER NOT NULL,
+      status TEXT DEFAULT 'scheduled', created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )""")
+    cur=con.execute('INSERT INTO repost_jobs(story_id,scheduled_at,admin_id) VALUES(?,?,?)',(story_id,scheduled_at_utc,admin_id))
+    con.commit(); job_id=cur.lastrowid; con.close(); return job_id
+
+
+def get_repost_jobs(limit=100):
+    con=get_connection()
+    con.execute("""CREATE TABLE IF NOT EXISTS repost_jobs(
+      id INTEGER PRIMARY KEY AUTOINCREMENT, story_id INTEGER NOT NULL,
+      scheduled_at TEXT NOT NULL, admin_id INTEGER NOT NULL,
+      status TEXT DEFAULT 'scheduled', created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )""")
+    rows=con.execute('SELECT * FROM repost_jobs ORDER BY scheduled_at LIMIT ?',(limit,)).fetchall(); con.close(); return rows
+
+
+def get_due_repost_jobs(now_utc, limit=10):
+    con=get_connection(); con.execute("""CREATE TABLE IF NOT EXISTS repost_jobs(
+      id INTEGER PRIMARY KEY AUTOINCREMENT, story_id INTEGER NOT NULL,
+      scheduled_at TEXT NOT NULL, admin_id INTEGER NOT NULL,
+      status TEXT DEFAULT 'scheduled', created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )"""); rows=con.execute("SELECT * FROM repost_jobs WHERE status='scheduled' AND scheduled_at<=? ORDER BY scheduled_at LIMIT ?",(now_utc,limit)).fetchall(); con.close(); return rows
+
+def claim_repost_job(job_id):
+    con=get_connection(); cur=con.execute("UPDATE repost_jobs SET status='publishing' WHERE id=? AND status='scheduled'",(job_id,)); con.commit(); ok=cur.rowcount==1; con.close(); return ok
+
+def finish_repost_job(job_id,status='published'):
+    con=get_connection(); con.execute("UPDATE repost_jobs SET status=? WHERE id=?",(status,job_id)); con.commit(); con.close()
