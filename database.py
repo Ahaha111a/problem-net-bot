@@ -347,10 +347,46 @@ def _random_next_notification_iso():
     import random
     from datetime import datetime, timedelta
     from zoneinfo import ZoneInfo
-    now = datetime.now(ZoneInfo("Europe/Oslo"))
-    # Случайное время примерно раз в 24 часа: от 23 до 25 часов после предыдущего.
-    seconds = random.randint(23 * 3600, 25 * 3600)
-    return (now + timedelta(seconds=seconds)).isoformat()
+
+    tz = ZoneInfo("Europe/Moscow")
+
+    now = datetime.now(tz)
+
+    # Ровно один раз в сутки.
+    # Для следующего календарного дня
+    # выбирается случайное время по Москве.
+
+    next_day = (
+        now.date()
+        + timedelta(days=1)
+    )
+
+    hour = random.randint(
+        0,
+        23,
+    )
+
+    minute = random.randint(
+        0,
+        59,
+    )
+
+    second = random.randint(
+        0,
+        59,
+    )
+
+    target = datetime(
+        next_day.year,
+        next_day.month,
+        next_day.day,
+        hour,
+        minute,
+        second,
+        tzinfo=tz,
+    )
+
+    return target.isoformat()
 
 
 def register_user(user_id: int):
