@@ -209,7 +209,7 @@ async def maintenance_worker(bot: Bot):
                 await send_daily_support_notifications(bot)
                 last_notification_minute = minute_key
 
-            # Ежедневная SQLite-копия в 03:15 по Europe/Oslo.
+            # Ежедневная SQLite-копия в 03:15 по Europe/Moscow.
             if now.hour == 3 and now.minute == 15 and last_backup_date != now.date():
                 try:
                     path = backup_database()
