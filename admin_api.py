@@ -58,7 +58,11 @@ def validate_init_data(init_data: str) -> dict | None:
         if not received_hash:
             return None
         check = '\n'.join(f'{k}={data[k]}' for k in sorted(data))
-        secret = hmac.new(b'WebAppData', BOT_TOKEN.encode(), hashlib.sha256).digest()
+        secret = hmac.new(
+        b'WebAppData',
+        BOT_TOKEN.encode(),
+        hashlib.sha256,
+    ).digest()
         expected = hmac.new(secret, check.encode(), hashlib.sha256).hexdigest()
         if not hmac.compare_digest(expected, received_hash):
             return None
@@ -89,6 +93,13 @@ def auth(request, allowed=None):
 
 async def index(request):
     return web.FileResponse(WEB_DIR / 'index.html')
+
+async def health(request):
+    return web.json_response({
+        'ok': True,
+        'service': 'problem-net-admin',
+        'timezone': 'Europe/Moscow',
+    })
 
 async def static_file(request):
     name = request.match_info['name']
@@ -366,9 +377,11 @@ def create_app(bot):
     app=web.Application()
     app['bot']=bot
     app.router.add_get('/', index)
+    app.router.add_get('/health', health)
     app.router.add_get('/admin', index)
     app.router.add_get('/admin/', index)
     app.router.add_get('/admin/{name}', static_file)
+    app.router.add_get('/assets/{name}', static_file)
     app.router.add_get('/admin/api/dashboard', dashboard)
     app.router.add_get('/admin/api/stories', stories)
     app.router.add_get('/admin/api/story/{id}', story)
