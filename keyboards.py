@@ -26,7 +26,7 @@ admin_user_keyboard = ReplyKeyboardMarkup(
         [KeyboardButton(text="💡 Совет дня"), KeyboardButton(text="📚 Полезные материалы")],
         [KeyboardButton(text="🆘 Экстренная поддержка")],
         [KeyboardButton(text="📖 Смотреть истории")],
-        *([[KeyboardButton(text="🖥 Админ-панель", web_app=WebAppInfo(url=os.getenv("ADMIN_MINIAPP_URL", "")))]] if os.getenv("ADMIN_MINIAPP_URL") else []),
+        [KeyboardButton(text="🖥 Админ-панель")],
         [KeyboardButton(text="🧰 Резервная админ-панель")],
     ],
     resize_keyboard=True,
@@ -37,15 +37,28 @@ admin_keyboard = ReplyKeyboardMarkup(
     keyboard=[
         [KeyboardButton(text="⏳ Модерация"), KeyboardButton(text="📊 Статистика")],
         [KeyboardButton(text="📈 Аналитика"), KeyboardButton(text="💬 Диалоги")],
-        [KeyboardButton(text="🗓 Планировщик") , KeyboardButton(text="📜 Журнал действий")],
+        [KeyboardButton(text="🗓 Планировщик"), KeyboardButton(text="📜 Журнал действий")],
         [KeyboardButton(text="📁 Все истории")],
         [KeyboardButton(text="👥 Роли администраторов")],
-        *([[KeyboardButton(text="🖥 Открыть Mini App", web_app=WebAppInfo(url=os.getenv("ADMIN_MINIAPP_URL", "")))]] if os.getenv("ADMIN_MINIAPP_URL") else []),
+        [KeyboardButton(text="🖥 Открыть Mini App")],
         [KeyboardButton(text="👤 Режим пользователя")],
         [KeyboardButton(text="⬅️ Назад")],
     ],
     resize_keyboard=True,
 )
+
+
+
+def admin_miniapp_keyboard():
+    url = os.getenv("ADMIN_MINIAPP_URL", "").strip()
+    if not url:
+        return InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="❌ ADMIN_MINIAPP_URL не настроен", callback_data="admin_miniapp_missing")]
+        ])
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🖥 Открыть панель модератора", web_app=WebAppInfo(url=url))]
+    ])
+
 
 def support_method_keyboard():
     return InlineKeyboardMarkup(inline_keyboard=[
