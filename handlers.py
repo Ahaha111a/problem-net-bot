@@ -52,6 +52,7 @@ from keyboards import (
     personal_contact_keyboard,
     material_actions_keyboard,
     published_story_keyboard,
+    admin_miniapp_keyboard,
 )
 
 
@@ -316,7 +317,39 @@ async def view_stories(
 # ADMIN MODE
 # =========================================================
 
-@router.message(F.text.in_({"👨‍💼 Админ-панель", "🧰 Резервная админ-панель"}))
+@router.message(F.text == "🖥 Админ-панель")
+async def open_admin_miniapp(
+    message: Message,
+    state: FSMContext,
+):
+    if not is_admin(message.from_user.id):
+        return
+
+    await state.clear()
+
+    await message.answer(
+        "🖥 <b>Панель модератора</b>\n\n"
+        "Откройте Mini App для работы с историями, поддержкой, аналитикой и расписанием.",
+        parse_mode="HTML",
+        reply_markup=admin_miniapp_keyboard(),
+    )
+
+
+@router.message(F.text == "🖥 Открыть Mini App")
+async def open_admin_miniapp_from_admin_mode(
+    message: Message,
+):
+    if not is_admin(message.from_user.id):
+        return
+
+    await message.answer(
+        "🖥 <b>Панель модератора</b>",
+        parse_mode="HTML",
+        reply_markup=admin_miniapp_keyboard(),
+    )
+
+
+@router.message(F.text == "🧰 Резервная админ-панель")
 async def switch_to_admin_mode(
     message: Message,
     state: FSMContext,
@@ -329,7 +362,7 @@ async def switch_to_admin_mode(
     stats = get_extended_stats()
 
     await message.answer(
-        "👨‍💼 <b>Панель администратора</b>\n\n"
+        "👨‍💼 <b>Резервная панель администратора</b>\n\n"
         f"⏳ На модерации: {stats['waiting']}\n"
         f"📚 Всего историй: {stats['total']}\n"
         f"✅ Опубликовано: {stats['published']}\n"
@@ -1090,3 +1123,4 @@ async def back(
             parse_mode="HTML",
             reply_markup=main_keyboard,
         )
+1
