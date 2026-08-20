@@ -1,24 +1,82 @@
-const tg = window.Telegram.WebApp;
-tg.ready();
-tg.expand();
+(() => {
+  'use strict';
 
-const initData = tg.initData || '';
-const api = async (path, options = {}) => {
-  const response = await fetch(path, {
-    ...options,
-    headers: {
-      'Content-Type': 'application/json',
-      'X-Telegram-Init-Data': initData,
-      ...(options.headers || {})
+  const content = () => document.querySelector('#content');
+
+  function esc(value) {
+    return String(value ?? '').replace(/[&<>"']/g, m => ({
+      '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'
+    }[m]));
+  }
+
+  if (!window.Telegram || !window.Telegram.WebApp) {
+    const c = content();
+    if (c) {
+      c.innerHTML = `<div class="card">
+        ❌ <b>Mini App открыт вне Telegram.</b><br><br>
+        Откройте панель администратора через Telegram.
+      </div>`;
     }
-  });
-  if (!response.ok) throw new Error(await response.text());
-  return response.json();
-};
+    return;
+  }
 
-if (tg.colorScheme === 'dark') document.body.classList.add('dark');
+  const tg = window.Telegram.WebApp;
+  tg.ready();
+  tg.expand();
 
-let state = { tab: 'dashboard', selected: new Set(), dashboard: null };
+  const initData = tg.initData || '';
+
+  if (!initData) {
+    const c = content();
+    if (c) {
+      c.innerHTML = `<div class="card">
+        ❌ <b>Telegram не передал данные авторизации.</b><br><br>
+        Закройте Mini App и откройте его повторно через кнопку
+        «🖥 Админ-панель».
+      </div>`;
+    }
+    return;
+  }
+
+  const api = async (path, options = {}) => {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 15000);
+
+    try {
+      const response = await fetch(path, {
+        ...options,
+        signal: controller.signal,
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Telegram-Init-Data': initData,
+          ...(options.headers || {})
+        }
+      });
+
+      const text = await response.text();
+
+      if (!response.ok) {
+        throw new Error(`${response.status}: ${text || response.statusText}`);
+      }
+
+      try {
+        return text ? JSON.parse(text) : {};
+      } catch {
+        throw new Error('Сервер вернул некорректный JSON.');
+      }
+    } catch (error) {
+      if (error.name === 'AbortError') {
+        throw new Error('Сервер не ответил за 15 секунд.');
+      }
+      throw error;
+    } finally {
+      clearTimeout(timeout);
+    }
+  };
+
+  if (tg.colorScheme === 'dark') document.body.classList.add('dark');
+
+  let state = { tab: 'dashboard', selected: new Set(), dashboard: null };
 const tabs = [
   ['dashboard','🏠 Dashboard'],
   ['kanban','🛡 Модерация'],
@@ -126,7 +184,22 @@ async function queue(c){const d=await api('/admin/api/content/analytics');c.inne
 
 async function support(c){const d=await api('/admin/api/support/metrics');const m=d.metrics;c.innerHTML=`<h2>BP / BR — Поддержка</h2><div class="grid"><div class="card">Всего: <b>${m.total||0}</b></div><div class="card">Открыто: <b>${m.open_count||0}</b></div><div class="card">BS — средний первый ответ: <b>${fmtSeconds(m.avg_first_response_seconds)}</b></div><div class="card">BT — среднее решение: <b>${fmtSeconds(m.avg_resolution_seconds)}</b></div></div><h3>BU — Нагрузка</h3>${d.queue.map(x=>`<div class="card"><b>#${x.id}</b> · User ${x.user_id} · ${x.assignment_status}<br>Приоритет: ${x.priority}<br>${esc(x.first_message||'')}</div>`).join('')||'Очередь пуста'}`;}
 function fmtSeconds(v){if(v==null)return'—';v=Number(v);if(v<60)return Math.round(v)+' сек';if(v<3600)return Math.round(v/60)+' мин';return (v/3600).toFixed(1)+' ч';}
-async function complaints(c){const d=await api('/admin/api/complaints');c.innerHTML=`<h2>AB — Жалобы</h2>${d.items.map(x=>`<div class="card"><b>#${x.story_id}</b> ${esc(x.reason)}<br>${x.status} · ${x.priority}${btn('В работу',"complaintUpdate("+x.id+",'in_progress') )}${btn('Закрыть',"complaintUpdate("+x.id+",'closed') )}</div>`).join('')||'Жалоб нет'}`;}
+async function complaints(c) {
+  const d = await api('/admin/api/complaints');
+
+  c.innerHTML = `<h2>AB — Жалобы</h2>${
+    d.items.map(x => `
+      <div class="card">
+        <b>#${x.story_id}</b> ${esc(x.reason)}<br>
+        ${esc(x.status)} · ${esc(x.priority)}
+        <div class="actions">
+          ${btn('В работу', `complaintUpdate(${x.id},'in_progress')`)}
+          ${btn('Закрыть', `complaintUpdate(${x.id},'closed')`)}
+        </div>
+      </div>
+    `).join('') || 'Жалоб нет'
+  }`;
+}
 async function complaintUpdate(id,status){await api('/admin/api/complaint/'+id,{method:'PUT',body:JSON.stringify({status})});await render();}
 async function analytics(c){const d=await api('/admin/api/content/analytics');const a=await api('/admin/api/analytics');c.innerHTML=`<h2>AS / CF / CH / CI</h2><div class="grid"><div class="card">Пользователи: ${a.analytics.users}</div><div class="card">Истории: ${a.analytics.stories}</div><div class="card">Реакции: ${a.analytics.reactions}</div><div class="card">Диалоги: ${a.analytics.dialogs}</div></div><div class="card"><h3>CF — Воронка</h3>Пользователи: ${d.funnel.users}<br>Создали историю: ${d.funnel.stories}<br>Опубликовано: ${d.funnel.published}<br>Обращались в поддержку: ${d.funnel.support_users}</div><div class="card"><h3>CH — Лучшие категории</h3>${d.categories.map(x=>`${esc(x.category)} — ${x.stories} историй / ${x.published} опубликовано`).join('<br>')}</div><div class="card"><h3>CI — Лучшие часы публикации</h3>${d.hours.map(x=>`${String(x.hour).padStart(2,'0')}:00 МСК — ${x.count}`).join('<br>')}</div><div class="card"><h3>AU / AV / AW</h3>${a.top.map(x=>`#${x.id} — ${x.reactions} реакций`).join('<br>')}<hr>${a.moderators.map(x=>`${x.admin_id}: ${x.action} — ${x.count}`).join('<br>')}</div>`;}
 async function dialogs(c){const d=await api('/admin/api/dialogs');c.innerHTML=`<h2>AJ / AK / AL / AN — Поддержка</h2>${d.items.map(x=>`<div class="card"><b>#${x.id}</b> User ${x.user_id}<br>${esc(x.first_message||'')}<div class="actions">${btn('🔴 Critical',"setPriority("+x.id+",'critical')")}${btn('🟠 High',"setPriority("+x.id+",'high')")}${btn('🟡 Normal',"setPriority("+x.id+",'normal')")}${btn('🟢 Low',"setPriority("+x.id+",'low')")}${btn('👤 Назначить себе',"dialogAction("+x.id+",'assign')")}${btn('⏳ Ждём',"dialogAction("+x.id+",'waiting')")}${btn('✅ Решён',"dialogAction("+x.id+",'resolved')")}${btn('🔴 Закрыть',"dialogAction("+x.id+",'close')")}</div><textarea id="msg${x.id}" placeholder="Ответ пользователю"></textarea>${btn('💬 Отправить',"sendDialog("+x.id+")",'btn primary')}</div>`).join('')||'Нет открытых диалогов'}`;}
@@ -140,3 +213,5 @@ async function security(c){const d=await api('/admin/api/security');c.innerHTML=
 async function notifications(c){const d=await api('/admin/api/notifications');c.innerHTML=`<h2>BF — Уведомления</h2>${d.items.map(x=>`<div class="card"><b>${esc(x.title)}</b><p>${esc(x.body)}</p>${x.read_at?'':'🔵 Непрочитано'}</div>`).join('')||'Нет уведомлений'}`;}
 
 load().catch(e => { document.querySelector('#content').innerHTML = `<div class="card">❌ ${esc(e.message)}<br><br>Если это 404 — проверьте, что ADMIN_MINIAPP_URL указывает на домен Railway, а не на несуществующий /admin путь.</div>`; });
+
+})();
