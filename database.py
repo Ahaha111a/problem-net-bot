@@ -350,7 +350,7 @@ def _random_next_notification_iso():
     import random
     from datetime import datetime, timedelta
     from zoneinfo import ZoneInfo
-    now = datetime.now(ZoneInfo("Europe/Oslo"))
+    now = datetime.now(ZoneInfo("Europe/Moscow"))
     # Случайное время примерно раз в 24 часа: от 23 до 25 часов после предыдущего.
     seconds = random.randint(23 * 3600, 25 * 3600)
     return (now + timedelta(seconds=seconds)).isoformat()
