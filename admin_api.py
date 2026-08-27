@@ -3,6 +3,7 @@ import hmac
 import json
 import os
 import urllib.parse
+import traceback
 from datetime import datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -103,20 +104,46 @@ async def health(request):
 
 async def static_file(request):
     name = request.match_info['name']
-    if '/' in name or '\\' in name:
+    if '/' in name or '\\' in name or name in {'.', '..'}:
         raise web.HTTPNotFound()
     path = WEB_DIR / name
-    if not path.exists():
-        raise web.HTTPNotFound()
-    return web.FileResponse(path)
+    if not path.is_file():
+        raise web.HTTPNotFound(text='Static file not found')
+    response = web.FileResponse(path)
+    response.headers['Cache-Control'] = 'no-store'
+    return response
 
+
+@web.middleware
+async def error_middleware(request, handler):
+    try:
+        return await handler(request)
+    except web.HTTPException:
+        raise
+    except Exception as exc:
+        print('\n================ MINI APP SERVER ERROR ================')
+        print(f'Method: {request.method}')
+        print(f'Path: {request.path_qs}')
+        print(f'Error: {type(exc).__name__}: {exc}')
+        traceback.print_exc()
+        print('========================================================\n')
+        return web.json_response(
+            {'ok': False, 'error': 'Внутренняя ошибка сервера', 'details': str(exc)},
+            status=500,
+        )
+
+
+
+async def api_health(request):
+    uid = auth(request)
+    return web.json_response({'ok': True, 'user_id': uid, 'timezone': 'Europe/Moscow'})
 
 async def dashboard(request):
-    uid=auth(request)
-    stats=get_extended_stats()
+    uid = auth(request)
     return web.json_response({
-        'me': {'id':uid,'role':get_admin_role(uid)},
-        'stats': stats,
+        'me': {'id': uid, 'role': get_admin_role(uid)},
+        'timezone': 'Europe/Moscow',
+        'stats': get_extended_stats(),
         'analytics': get_analytics(),
         'complaints': _rows(get_complaints('new', 20)),
         'sla_breaches': _rows(get_sla_breaches()),
@@ -374,7 +401,7 @@ async def security(request):
     return web.json_response({'items': _rows(get_security_events(300))})
 
 def create_app(bot):
-    app=web.Application()
+    app=web.Application(middlewares=[error_middleware])
     app['bot']=bot
     app.router.add_get('/', index)
     app.router.add_get('/health', health)
@@ -382,6 +409,7 @@ def create_app(bot):
     app.router.add_get('/admin/', index)
     app.router.add_get('/admin/{name}', static_file)
     app.router.add_get('/assets/{name}', static_file)
+    app.router.add_get('/admin/api/ping', api_health)
     app.router.add_get('/admin/api/dashboard', dashboard)
     app.router.add_get('/admin/api/stories', stories)
     app.router.add_get('/admin/api/story/{id}', story)
