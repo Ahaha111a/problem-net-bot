@@ -78,14 +78,14 @@
 
   let state = { tab: 'dashboard', selected: new Set(), dashboard: null };
 const tabs = [
-  ['dashboard','🏠 Dashboard'],
+  ['dashboard','🏠 Главная'],
   ['kanban','🛡 Модерация'],
   ['calendar','📅 Календарь'],
   ['queue','📋 Очередь'],
   ['support','💬 Поддержка'],
   ['complaints','⚠️ Жалобы'],
   ['analytics','📈 Аналитика'],
-  ['roles','👥 Роли'],
+  ['roles','👥 Роли сотрудников'],
   ['audit','📜 Аудит'],
   ['security','🔐 Безопасность'],
   ['notifications','🔔 Уведомления']
@@ -206,11 +206,22 @@ async function dialogs(c){const d=await api('/admin/api/dialogs');c.innerHTML=`<
 async function sendDialog(id){const el=document.getElementById('msg'+id);if(!el.value.trim())return;await api('/admin/api/dialog/'+id+'/message',{method:'POST',body:JSON.stringify({text:el.value})});el.value='';await render();}
 async function dialogAction(id,a){await api('/admin/api/dialog/'+id+'/'+a,{method:'POST'});await render();}
 async function setPriority(id,p){await api('/admin/api/dialog/'+id,{method:'PUT',body:JSON.stringify({priority:p})});await render();}
-async function roles(c){const d=await api('/admin/api/roles');c.innerHTML=`<h2>AO — Роли</h2>${d.items.map(x=>`<div class="card"><b>${x.user_id}</b> — ${x.role}<select onchange="setRole(${x.user_id},this.value)"><option value="owner" ${x.role==='owner'?'selected':''}>owner</option><option value="moderator" ${x.role==='moderator'?'selected':''}>moderator</option><option value="support" ${x.role==='support'?'selected':''}>support</option><option value="analyst" ${x.role==='analyst'?'selected':''}>analyst</option><option value="editor" ${x.role==='editor'?'selected':''}>editor</option></select></div>`).join('')}`;}
+async function roles(c){const d=await api('/admin/api/roles');c.innerHTML=`<h2>AO — Роли</h2>${d.items.map(x=>`<div class="card"><b>${x.user_id}</b> — ${x.role}<select onchange="setRole(${x.user_id},this.value)"><option value="owner" ${x.role==='owner'?'selected':''}>Основатель</option><option value="moderator" ${x.role==='moderator'?'selected':''}>Модератор</option><option value="support" ${x.role==='support'?'selected':''}>Поддержка</option><option value="analyst" ${x.role==='analyst'?'selected':''}>Аналитик</option><option value="editor" ${x.role==='editor'?'selected':''}>Редактор</option></select></div>`).join('')}`;}
 async function setRole(id,role){await api('/admin/api/role/'+id,{method:'PUT',body:JSON.stringify({role})});}
 async function audit(c){const d=await api('/admin/api/audit');c.innerHTML=`<h2>AP — Аудит</h2>${d.items.map(x=>`<div class="card">${esc(x.created_at)} · ${x.admin_id} · ${esc(x.action)}<br>${esc(x.details||'')}</div>`).join('')}`;}
 async function security(c){const d=await api('/admin/api/security');c.innerHTML=`<h2>BZ — Журнал безопасности</h2>${d.items.map(x=>`<div class="card">${esc(x.created_at)} · admin ${x.admin_id}<br><b>${esc(x.action)}</b><br>${esc(x.details||'')}</div>`).join('')}`;}
 async function notifications(c){const d=await api('/admin/api/notifications');c.innerHTML=`<h2>BF — Уведомления</h2>${d.items.map(x=>`<div class="card"><b>${esc(x.title)}</b><p>${esc(x.body)}</p>${x.read_at?'':'🔵 Непрочитано'}</div>`).join('')||'Нет уведомлений'}`;}
+
+  // ВАЖНО: все кнопки Mini App используют inline onclick.
+  // Так как код находится внутри IIFE, функции необходимо явно экспортировать в window.
+  Object.assign(window, {
+    setTab, selectAll, bulkReject, bulkUnschedule, autoPlanSelected,
+    dropStory, openStory, saveStory, retryAI, moderateAI, publishStory,
+    rejectStory, previewStory, contactUser, scheduleStory, repostStory,
+    restoreVersion, toggleSelect, complaintUpdate, sendDialog, dialogAction,
+    setPriority, setRole
+  });
+
 
 load().catch(e => { document.querySelector('#content').innerHTML = `<div class="card">❌ ${esc(e.message)}<br><br>Если это 404 — проверьте, что ADMIN_MINIAPP_URL указывает на домен Railway, а не на несуществующий /admin путь.</div>`; });
 
