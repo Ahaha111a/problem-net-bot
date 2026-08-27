@@ -3,9 +3,7 @@ import sqlite3
 from pathlib import Path
 
 
-DB_PATH = Path(
-    os.getenv("DB_PATH", "bot.db")
-)
+DB_PATH = Path(os.getenv("DB_PATH", "bot.db"))
 
 
 if DB_PATH.parent and str(DB_PATH.parent) != ".":
@@ -351,9 +349,13 @@ def _random_next_notification_iso():
     from datetime import datetime, timedelta
     from zoneinfo import ZoneInfo
     now = datetime.now(ZoneInfo("Europe/Moscow"))
-    # Случайное время примерно раз в 24 часа: от 23 до 25 часов после предыдущего.
-    seconds = random.randint(23 * 3600, 25 * 3600)
-    return (now + timedelta(seconds=seconds)).isoformat()
+    # Следующее уведомление ровно через 24 часа.
+    # Время первого уведомления случайное, затем интервал сохраняется ровно 24 часа.
+    next_day = now + timedelta(days=1)
+    random_hour = random.randint(9, 22)
+    random_minute = random.randint(0, 59)
+    scheduled = next_day.replace(hour=random_hour, minute=random_minute, second=0, microsecond=0)
+    return scheduled.isoformat()
 
 
 def register_user(user_id: int):
