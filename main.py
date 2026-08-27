@@ -8,7 +8,7 @@ from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 
-from config import BOT_TOKEN, CHANNEL_ID, ADMIN_IDS
+from config import BOT_TOKEN, CHANNEL_ID, ADMIN_IDS, DB_PATH, BACKUP_DIR
 from database import (
     init_db,
     get_due_notification_users,
@@ -228,7 +228,8 @@ async def main():
     print("🚀 Запуск бота...")
 
     init_db()
-    print("✅ База данных инициализирована")
+    print(f"✅ База данных: {DB_PATH}")
+    print(f"💾 Резервные копии: {BACKUP_DIR}")
 
     bot = Bot(
         token=BOT_TOKEN,
