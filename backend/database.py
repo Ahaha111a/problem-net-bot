@@ -184,6 +184,8 @@ def init_db():
     root = Path(__file__).resolve().parent
     cfg = Config(str(root / "alembic.ini"))
     cfg.set_main_option("script_location", str(root / "alembic"))
+    if not (root / "alembic" / "versions").is_dir():
+        raise RuntimeError(f"Alembic migrations not found: {root / 'alembic' / 'versions'}")
     cfg.set_main_option("sqlalchemy.url", DATABASE_URL.replace("%", "%%"))
     command.upgrade(cfg, "head")
     ensure_platform_defaults()

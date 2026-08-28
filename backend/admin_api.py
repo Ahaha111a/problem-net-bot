@@ -12,6 +12,7 @@ from aiohttp import web
 
 from config import BOT_TOKEN, MODERATOR_BOT_TOKEN, CHANNEL_ID, ADMIN_IDS
 from database import (
+    get_connection,
     get_all_settings, set_setting, get_ai_checks, set_ai_check, lock_story, get_story_lock, unlock_story,
     get_system_errors, get_system_health, integrity_check, get_moderator_goals, set_moderator_goal,
     get_moderator_performance, get_training, assign_training, set_training_status, get_ai_priority_queue, create_ai_priority,
@@ -32,6 +33,7 @@ from ai import analyze_story, moderate_story
 from post_generator import create_post
 from keyboards import channel_story_keyboard, published_story_keyboard
 from rate_limit import allowed as rate_limit_allowed
+from staff_ops import employees,employee,change_role,set_status,set_permission,permissions,role_history,promotion_history,violations,courses,assignments,assign_course,update_assignment,leaderboard
 
 TZ = ZoneInfo('Europe/Moscow')
 BASE_DIR = Path(__file__).resolve().parent
@@ -91,6 +93,15 @@ def auth(request, allowed=None):
     if uid not in ADMIN_IDS:
         raise web.HTTPForbidden(text='Admin access required')
     role = get_admin_role(uid)
+    # Fired employees lose access immediately, even if their old role remains in admin_roles.
+    try:
+        row = get_connection().execute('SELECT status FROM employee_profiles WHERE admin_id=?', (uid,)).fetchone()
+        if row and row['status'] == 'fired':
+            raise web.HTTPForbidden(text='Доступ сотрудника отключён')
+    except web.HTTPException:
+        raise
+    except Exception:
+        pass
     if allowed and role not in allowed:
         raise web.HTTPForbidden(text='Insufficient role')
     return uid
@@ -469,6 +480,26 @@ async def priority_queue_api(request):
 async def priority_create_api(request):
     uid=auth(request, {'owner','moderator','editor'}); p=await request.json(); create_ai_priority(int(p['story_id']),p.get('priority','high'),p.get('reason','')); log_admin_action(uid,'ai_priority_create',story_id=int(p['story_id'])); return web.json_response({'ok':True})
 
+
+async def employees_api(request):
+ auth(request, {'owner','analyst'}); return web.json_response({'items':_rows(employees())})
+async def employee_api(request):
+ auth(request, {'owner','analyst'}); uid=int(request.match_info['id']); return web.json_response({'employee':_json(employee(uid)),'permissions':_rows(permissions(uid)),'role_history':_rows(role_history(uid)),'promotion_history':_rows(promotion_history(uid)),'violations':_rows(violations(uid)),'assignments':_rows(assignments(uid))})
+async def employee_role_api(request):
+ uid=auth(request, {'owner'}); p=await request.json(); change_role(int(request.match_info['id']),str(p['role']),uid,str(p.get('reason',''))); return web.json_response({'ok':True})
+async def employee_status_api(request):
+ uid=auth(request, {'owner'}); p=await request.json(); set_status(int(request.match_info['id']),str(p['status']),uid,str(p.get('reason',''))); return web.json_response({'ok':True})
+async def employee_permission_api(request):
+ uid=auth(request, {'owner'}); p=await request.json(); set_permission(int(request.match_info['id']),str(p['permission']),bool(p.get('enabled')),uid); return web.json_response({'ok':True})
+async def lms_api(request):
+ auth(request, {'owner','moderator','analyst'}); return web.json_response({'courses':_rows(courses()),'assignments':_rows(assignments())})
+async def lms_assign_api(request):
+ auth(request, {'owner','moderator'}); p=await request.json(); assign_course(int(p['admin_id']),int(p['course_id']),p.get('due_at')); return web.json_response({'ok':True})
+async def lms_update_api(request):
+ auth(request, {'owner','moderator'}); p=await request.json(); update_assignment(int(request.match_info['id']),str(p.get('status','completed')),int(p.get('progress',100)),p.get('score')); return web.json_response({'ok':True})
+async def leaderboard_api(request):
+ auth(request, {'owner','analyst','moderator'}); return web.json_response({'items':leaderboard(int(request.query.get('days','30')))})
+
 def create_app(bot):
     app=web.Application(middlewares=[rate_limit_middleware, error_middleware])
     app['bot']=bot
@@ -519,6 +550,15 @@ def create_app(bot):
     app.router.add_post('/admin/api/story/{id}/lock', story_lock_api)
     app.router.add_delete('/admin/api/story/{id}/lock', story_unlock_api)
     app.router.add_get('/admin/api/monitoring', monitoring)
+    app.router.add_get('/admin/api/employees', employees_api)
+    app.router.add_get('/admin/api/employee/{id}', employee_api)
+    app.router.add_put('/admin/api/employee/{id}/role', employee_role_api)
+    app.router.add_put('/admin/api/employee/{id}/status', employee_status_api)
+    app.router.add_put('/admin/api/employee/{id}/permission', employee_permission_api)
+    app.router.add_get('/admin/api/lms', lms_api)
+    app.router.add_post('/admin/api/lms/assign', lms_assign_api)
+    app.router.add_put('/admin/api/lms/assignment/{id}', lms_update_api)
+    app.router.add_get('/admin/api/leaderboard', leaderboard_api)
     app.router.add_get('/admin/api/training', training)
     app.router.add_post('/admin/api/training', training_assign_api)
     app.router.add_put('/admin/api/training/{id}', training_update_api)
