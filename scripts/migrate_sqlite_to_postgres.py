@@ -24,7 +24,8 @@ if not sqlite_path.exists():
 
 # Сначала создаём PostgreSQL-схему.
 os.environ["DATABASE_URL"] = database_url
-from backend import database as db
+sys.path.insert(0, str(ROOT / "backend"))
+import database as db
 
 db.init_db()
 db.ensure_platform_defaults()
