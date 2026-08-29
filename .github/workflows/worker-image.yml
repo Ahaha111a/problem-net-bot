@@ -38,4 +38,4 @@ jobs:
           context: .
           file: Dockerfile.worker
           push: true
-          tags: ghcr.io/${{ github.repository_owner }}/${{ github.event.repository.name }}-ai-worker:latest
+          tags: ghcr.io/ahaha111a/problem-net-bot-ai-worker:latest
