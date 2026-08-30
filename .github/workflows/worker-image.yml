@@ -2,40 +2,33 @@ name: Build AI Worker image
 
 on:
   push:
-    branches: ["main"]
+    branches:
+      - main
     paths:
-      - "backend/ai.py"
-      - "backend/ai_queue.py"
-      - "backend/ai_worker.py"
-      - "backend/database.py"
-      - "backend/config.py"
-      - "requirements.txt"
       - "Dockerfile.worker"
+      - "backend/**"
       - ".github/workflows/worker-image.yml"
-  workflow_dispatch:
 
-permissions:
-  contents: read
-  packages: write
+  workflow_dispatch:
 
 jobs:
   build-and-push:
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Log in to GHCR
+      - name: Login to Docker Hub
         uses: docker/login-action@v3
         with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+          username: ${{ vars.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
 
       - name: Build and push
         uses: docker/build-push-action@v6
         with:
           context: .
-          file: Dockerfile.worker
+          file: ./Dockerfile.worker
           push: true
-          tags: ghcr.io/ahaha111a/problem-net-bot-ai-worker:latest
+          tags: ${{ vars.DOCKERHUB_USERNAME }}/problem-net-bot-ai-worker:latest
