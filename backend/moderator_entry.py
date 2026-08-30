@@ -2,13 +2,14 @@ from aiogram import Router, F
 from aiogram.types import Message
 
 from config import ADMIN_IDS
+from database import is_admin_active
 from keyboards import admin_keyboard
 
 router = Router()
 
 
 def is_admin(user_id: int) -> bool:
-    return user_id in ADMIN_IDS
+    return user_id in ADMIN_IDS and is_admin_active(user_id)
 
 
 @router.message(F.text == "/start")

@@ -7,9 +7,9 @@ from config import ADMIN_IDS, CHANNEL_ID
 from database import (
     create_story, update_ai_result, update_post, get_waiting_stories,
     get_all_stories, get_stats, register_user, create_support_dialog,
-    get_open_dialog_by_user, add_support_message, get_story_reaction_counts,
+    get_open_dialog_by_user, add_support_message, get_story_reaction_counts, create_ai_priority, get_story, is_admin_active,
 )
-from ai import analyze_story
+from ai import analyze_story, run_safety_pipeline
 from post_generator import create_post
 from keyboards import main_keyboard, admin_keyboard, moderation_keyboard, support_keyboard
 
@@ -21,7 +21,7 @@ class StoryState(StatesGroup):
 
 
 def is_admin(user_id: int) -> bool:
-    return user_id in ADMIN_IDS
+    return user_id in ADMIN_IDS and is_admin_active(user_id)
 
 
 @router.message(F.text == "/help")
@@ -54,6 +54,25 @@ async def receive_story(message: Message, state: FSMContext):
         update_post(story_id, post)
     except Exception as exc:
         update_post(story_id, text)
+
+    # Layered safety pipeline: risky/disputed cases stay human-reviewed.
+    try:
+        current = get_story(story_id)
+        safety = await run_safety_pipeline(
+            text,
+            current["post_text"] if current else "",
+            story_id,
+        )
+        if safety.get("recommendation") in {"manual_review", "reject"}:
+            priority = "critical" if float(safety.get("risk_score", 0)) >= 0.9 else "high"
+            create_ai_priority(
+                story_id,
+                priority,
+                str(safety.get("primary", {}).get("reason", "AI safety review")),
+            )
+    except Exception as exc:
+        create_ai_priority(story_id, "high", f"Safety pipeline unavailable: {exc}")
+
     await state.clear()
 
 

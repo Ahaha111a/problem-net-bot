@@ -92,6 +92,22 @@ async def _process_entry(r: Redis, stream_id: str, fields: dict, handler) -> Non
         await r.xack(QUEUE, GROUP, stream_id)
 
 
+async def _heartbeat(r: Redis, consumer: str) -> None:
+    try:
+        await r.set(
+            f"{QUEUE}:worker:{consumer}:heartbeat",
+            "1",
+            ex=max(30, int(CLAIM_IDLE_MS / 1000) * 2),
+        )
+        await r.set(
+            f"{QUEUE}:worker:{consumer}:queue_length",
+            str(await r.xlen(QUEUE)),
+            ex=max(30, int(CLAIM_IDLE_MS / 1000) * 2),
+        )
+    except Exception as exc:
+        print(f"⚠️ Redis heartbeat error: {exc}")
+
+
 async def worker_loop(handler):
     r = _redis()
     consumer = os.getenv("AI_WORKER_NAME", f"worker-{uuid.uuid4().hex[:8]}")
@@ -101,6 +117,7 @@ async def worker_loop(handler):
 
     try:
         while True:
+            await _heartbeat(r, consumer)
             # First recover jobs left pending by a crashed worker.
             try:
                 result = await r.xautoclaim(
@@ -115,6 +132,7 @@ async def worker_loop(handler):
                 if entries:
                     for stream_id, fields in entries:
                         await _process_entry(r, stream_id, fields, handler)
+                    await _heartbeat(r, consumer)
                     continue
             except Exception as exc:
                 print(f"⚠️ XAUTOCLAIM error: {exc}")
@@ -132,5 +150,6 @@ async def worker_loop(handler):
             for _, entries in messages:
                 for stream_id, fields in entries:
                     await _process_entry(r, stream_id, fields, handler)
+            await _heartbeat(r, consumer)
     finally:
         await r.aclose()

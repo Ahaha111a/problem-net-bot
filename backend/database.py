@@ -1,5 +1,6 @@
 import os
 import re
+import json
 from pathlib import Path
 
 
@@ -19,7 +20,10 @@ USE_POSTGRES = True
 if not DATABASE_URL:
     raise RuntimeError("DATABASE_URL не задан. После перехода на PostgreSQL SQLite больше не используется.")
 
-if DB_PATH.parent and str(DB_PATH.parent) != ".":
+# DB_PATH is retained only for backwards-compatible backup configuration.
+# Production uses PostgreSQL, so do not create a local /app/data directory on
+# import (Railway containers may not have a writable path there).
+if not DATABASE_URL and DB_PATH.parent and str(DB_PATH.parent) != ".":
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
 
 
@@ -49,7 +53,14 @@ def _translate_sql(sql: str) -> str:
 
     # INSERT OR IGNORE -> PostgreSQL ON CONFLICT.
     sql = re.sub(r"\bINSERT\s+OR\s+IGNORE\s+INTO", "INSERT INTO", sql, flags=re.I)
-    if re.search(r"\bINSERT\s+INTO\b", sql, flags=re.I) and " on conflict " not in sql.lower():
+    # Do not add a second ON CONFLICT clause to statements that already
+    # contain one.  The previous implementation only looked for the exact
+    # substring " ON CONFLICT " and therefore missed forms such as
+    # "ON CONFLICT(key)", producing invalid PostgreSQL.
+    if (
+        re.search(r"\bINSERT\s+INTO\b", sql, flags=re.I)
+        and not re.search(r"\bON\s+CONFLICT(?:\s*\(|\s+DO\b)", sql, flags=re.I)
+    ):
         # Only append for INSERT statements. For INSERT ... SELECT this is also
         # valid PostgreSQL syntax.
         sql = sql.rstrip().rstrip(";") + " ON CONFLICT DO NOTHING"
@@ -163,7 +174,23 @@ class _PGConnection:
 
 
 def get_connection():
-    return _PGConnection()
+    """Open a short-lived PostgreSQL connection with startup/network retries.
+
+    The project intentionally keeps the existing synchronous DB API for now,
+    but transient Supabase/Railway network hiccups should not immediately crash
+    a Telegram worker.
+    """
+    import time
+
+    last_error = None
+    for attempt in range(1, 4):
+        try:
+            return _PGConnection()
+        except Exception as exc:
+            last_error = exc
+            if attempt < 3:
+                time.sleep(0.75 * attempt)
+    raise RuntimeError(f"PostgreSQL connection failed after 3 attempts: {last_error}") from last_error
 
 
 # =========================================================
@@ -187,7 +214,18 @@ def init_db():
     if not (root / "alembic" / "versions").is_dir():
         raise RuntimeError(f"Alembic migrations not found: {root / 'alembic' / 'versions'}")
     cfg.set_main_option("sqlalchemy.url", DATABASE_URL.replace("%", "%%"))
-    command.upgrade(cfg, "head")
+
+    # Both Telegram services may boot at the same time. Serialize Alembic so
+    # two deployments cannot migrate the same PostgreSQL schema concurrently.
+    import psycopg
+    lock_key = 726391
+    with psycopg.connect(DATABASE_URL) as lock_con:
+        lock_con.execute("SELECT pg_advisory_lock(%s)", (lock_key,))
+        try:
+            command.upgrade(cfg, "head")
+        finally:
+            lock_con.execute("SELECT pg_advisory_unlock(%s)", (lock_key,))
+
     ensure_platform_defaults()
 
 
@@ -846,6 +884,16 @@ def get_admin_role(user_id: int) -> str:
     row = connection.execute("SELECT role FROM admin_roles WHERE user_id = ?", (user_id,)).fetchone()
     connection.close()
     return row["role"] if row else "moderator"
+
+
+def is_admin_active(user_id: int) -> bool:
+    """Return False immediately for fired/deactivated staff."""
+    if int(user_id) not in {int(x) for x in os.getenv("ADMIN_IDS", "").split(",") if x.strip()}:
+        return False
+    con = get_connection()
+    row = con.execute("SELECT status FROM employee_profiles WHERE admin_id=?", (int(user_id),)).fetchone()
+    con.close()
+    return not row or row["status"] != "fired"
 
 
 def set_admin_role(user_id: int, role: str):
@@ -1560,6 +1608,16 @@ def ensure_platform_defaults():
         con.execute('INSERT OR IGNORE INTO app_settings(key,value) VALUES(?,?)', (key, value))
     for key in ('analysis', 'moderation', 'quality', 'structured_moderation'):
         con.execute('INSERT OR IGNORE INTO ai_checks(key,enabled) VALUES(?,1)', (key,))
+    admin_ids = [int(x.strip()) for x in os.getenv("ADMIN_IDS", "").split(",") if x.strip()]
+    for admin_id in admin_ids:
+        con.execute(
+            """
+            INSERT INTO employee_profiles(admin_id,position,status,work_started_at)
+            VALUES(?, 'moderator', 'employee', CURRENT_TIMESTAMP)
+            ON CONFLICT(admin_id) DO NOTHING
+            """,
+            (admin_id,),
+        )
     con.commit(); con.close()
 
 
@@ -1692,6 +1750,45 @@ def get_moderator_goals(period=None):
     con.close(); return rows
 
 
+def record_kpi_event(admin_id, action, seconds=0, dangerous=False, correction=False):
+    """Increment the real daily KPI counters from actual moderation events."""
+    con = get_connection()
+    row = con.execute(
+        "SELECT id FROM moderator_kpi_daily WHERE admin_id=? AND day=(CURRENT_TIMESTAMP AT TIME ZONE 'Europe/Moscow')::date",
+        (int(admin_id),),
+    ).fetchone()
+    if not row:
+        con.execute(
+            "INSERT INTO moderator_kpi_daily(admin_id,day) VALUES(?,(CURRENT_TIMESTAMP AT TIME ZONE 'Europe/Moscow')::date)",
+            (int(admin_id),),
+        )
+    moderated = 1 if action in {"publish", "reject", "edit", "moderate"} else 0
+    published = 1 if action == "publish" else 0
+    errors = 1 if action == "error" else 0
+    support = 1 if action == "support_response" else 0
+    con.execute(
+        """
+        UPDATE moderator_kpi_daily
+        SET moderated=COALESCE(moderated,0)+?,
+            published=COALESCE(published,0)+?,
+            errors=COALESCE(errors,0)+?,
+            dangerous=COALESCE(dangerous,0)+?,
+            support_responses=COALESCE(support_responses,0)+?,
+            response_seconds=COALESCE(response_seconds,0)+?,
+            moderation_seconds=COALESCE(moderation_seconds,0)+?,
+            post_corrections=COALESCE(post_corrections,0)+?
+        WHERE admin_id=? AND day=(CURRENT_TIMESTAMP AT TIME ZONE 'Europe/Moscow')::date
+        """,
+        (
+            moderated, published, errors, 1 if dangerous else 0, support,
+            int(seconds if support else 0), int(seconds if moderated else 0),
+            1 if correction else 0, int(admin_id),
+        ),
+    )
+    con.commit()
+    con.close()
+
+
 def get_moderator_performance(days=30):
     con=get_connection(); _ensure_platform_tables(con)
     rows=con.execute("""
@@ -1720,3 +1817,276 @@ def report_was_sent(report_type, period_key):
 def mark_report_sent(report_type, period_key):
     con=get_connection(); _ensure_platform_tables(con)
     con.execute('INSERT OR IGNORE INTO report_log(report_type,period_key) VALUES(?,?)',(report_type,period_key)); con.commit(); con.close()
+
+
+# =========================================================
+# FOUNDER / AI CONTROL / LMS V2
+# =========================================================
+
+def get_ai_model_configs():
+    con = get_connection()
+    rows = con.execute(
+        "SELECT * FROM ai_model_configs ORDER BY priority ASC, model ASC"
+    ).fetchall()
+    con.close()
+    return rows
+
+
+def set_ai_model_config(model, enabled=True, priority=100, max_tokens=1800, temperature=0.2, admin_id=None):
+    con = get_connection()
+    con.execute(
+        """
+        INSERT INTO ai_model_configs(model,enabled,priority,max_tokens,temperature,updated_by,updated_at)
+        VALUES(?,?,?,?,?,?,CURRENT_TIMESTAMP)
+        ON CONFLICT(model) DO UPDATE SET
+          enabled=excluded.enabled,
+          priority=excluded.priority,
+          max_tokens=excluded.max_tokens,
+          temperature=excluded.temperature,
+          updated_by=excluded.updated_by,
+          updated_at=CURRENT_TIMESTAMP
+        """,
+        (model, bool(enabled), int(priority), int(max_tokens), float(temperature), admin_id),
+    )
+    con.commit()
+    con.close()
+
+
+def get_ai_model_health(limit=100):
+    con = get_connection()
+    rows = con.execute(
+        "SELECT * FROM ai_model_health ORDER BY checked_at DESC LIMIT ?",
+        (int(limit),),
+    ).fetchall()
+    con.close()
+    return rows
+
+
+def set_ai_model_health(model, status, latency_ms=0, error_rate=0, details="", checked_at=None):
+    con = get_connection()
+    con.execute(
+        """
+        INSERT INTO ai_model_health(model,status,latency_ms,error_rate,details,checked_at)
+        VALUES(?,?,?,?,?,COALESCE(?,CURRENT_TIMESTAMP))
+        ON CONFLICT(model) DO UPDATE SET
+          status=excluded.status,
+          latency_ms=excluded.latency_ms,
+          error_rate=excluded.error_rate,
+          details=excluded.details,
+          checked_at=excluded.checked_at
+        """,
+        (model, status, int(latency_ms or 0), float(error_rate or 0), str(details), checked_at),
+    )
+    con.commit()
+    con.close()
+
+
+def log_ai_safety_event(story_id, stage, model, passed, risk_score=None, confidence=None, flags=None, details=""):
+    con = get_connection()
+    con.execute(
+        """
+        INSERT INTO ai_safety_events
+          (story_id,stage,model,passed,risk_score,confidence,flags,details)
+        VALUES(?,?,?,?,?,?,?,?)
+        """,
+        (
+            story_id,
+            stage,
+            model,
+            bool(passed),
+            risk_score,
+            confidence,
+            json.dumps(flags or [], ensure_ascii=False),
+            str(details),
+        ),
+    )
+    con.commit()
+    con.close()
+
+
+def get_ai_safety_events(story_id=None, limit=200):
+    con = get_connection()
+    if story_id is None:
+        rows = con.execute(
+            "SELECT * FROM ai_safety_events ORDER BY created_at DESC LIMIT ?",
+            (int(limit),),
+        ).fetchall()
+    else:
+        rows = con.execute(
+            "SELECT * FROM ai_safety_events WHERE story_id=? ORDER BY created_at DESC LIMIT ?",
+            (int(story_id), int(limit)),
+        ).fetchall()
+    con.close()
+    return rows
+
+
+def create_deployment_event(environment, status, commit_sha="", details=""):
+    con = get_connection()
+    con.execute(
+        "INSERT INTO deploy_events(environment,status,commit_sha,details) VALUES(?,?,?,?)",
+        (environment, status, commit_sha, details),
+    )
+    con.commit()
+    con.close()
+
+
+def get_deployment_events(limit=100):
+    con = get_connection()
+    rows = con.execute(
+        "SELECT * FROM deploy_events ORDER BY created_at DESC LIMIT ?",
+        (int(limit),),
+    ).fetchall()
+    con.close()
+    return rows
+
+
+def founder_dashboard():
+    con = get_connection()
+    try:
+        stats = con.execute(
+            """
+            SELECT
+              (SELECT COUNT(*) FROM users) AS users,
+              (SELECT COUNT(*) FROM stories) AS stories,
+              (SELECT COUNT(*) FROM stories WHERE status='waiting') AS waiting,
+              (SELECT COUNT(*) FROM stories WHERE status='published') AS published,
+              (SELECT COUNT(*) FROM stories WHERE status='rejected') AS rejected,
+              (SELECT COUNT(*) FROM support_dialogs WHERE status='open') AS open_support,
+              (SELECT COUNT(*) FROM ai_priority_queue WHERE status='queued') AS ai_queue
+            """
+        ).fetchone()
+        hourly = con.execute(
+            """
+            SELECT EXTRACT(HOUR FROM created_at)::int AS hour, COUNT(*)::int AS count
+            FROM stories
+            WHERE created_at >= CURRENT_TIMESTAMP - INTERVAL '7 days'
+            GROUP BY 1 ORDER BY 1
+            """
+        ).fetchall()
+        publications = con.execute(
+            """
+            SELECT (created_at AT TIME ZONE 'Europe/Moscow')::date AS day,
+                   COUNT(*)::int AS count
+            FROM stories
+            WHERE status='published'
+              AND created_at >= CURRENT_TIMESTAMP - INTERVAL '30 days'
+            GROUP BY 1 ORDER BY 1
+            """
+        ).fetchall()
+        users = con.execute(
+            """
+            SELECT (created_at AT TIME ZONE 'Europe/Moscow')::date AS day,
+                   COUNT(*)::int AS count
+            FROM users
+            WHERE created_at >= CURRENT_TIMESTAMP - INTERVAL '30 days'
+            GROUP BY 1 ORDER BY 1
+            """
+        ).fetchall()
+        active_mods = con.execute(
+            """
+            SELECT COUNT(*)::int AS count
+            FROM employee_profiles
+            WHERE status <> 'fired'
+            """
+        ).fetchone()
+        avg_wait = con.execute(
+            """
+            SELECT COALESCE(AVG(EXTRACT(EPOCH FROM (COALESCE(first_response_at,CURRENT_TIMESTAMP)-created_at))),0) AS seconds
+            FROM support_dialogs WHERE status <> 'new'
+            """
+        ).fetchone()
+        return {
+            "stats": dict(stats) if stats else {},
+            "hourly_load": [dict(r) for r in hourly],
+            "publications": [dict(r) for r in publications],
+            "users": [dict(r) for r in users],
+            "active_moderators": int(active_mods["count"] if active_mods else 0),
+            "average_wait_seconds": float(avg_wait["seconds"] if avg_wait else 0),
+        }
+    finally:
+        con.close()
+
+
+def submit_lms_test(assignment_id, answers, admin_id):
+    """Auto-check all questions belonging to the assigned course."""
+    con = get_connection()
+    assignment = con.execute(
+        """
+        SELECT a.*, c.title AS course_title
+        FROM lms_assignments a JOIN lms_courses c ON c.id=a.course_id
+        WHERE a.id=? AND a.admin_id=?
+        """,
+        (int(assignment_id), int(admin_id)),
+    ).fetchone()
+    if not assignment:
+        con.close()
+        raise ValueError("Обучение не найдено.")
+
+    questions = con.execute(
+        """
+        SELECT t.id,t.question,t.options,t.correct_answer,t.points
+        FROM lms_tests t
+        JOIN lms_lessons l ON l.id=t.lesson_id
+        WHERE l.course_id=?
+        ORDER BY l.position,t.id
+        """,
+        (assignment["course_id"],),
+    ).fetchall()
+
+    answers = answers or {}
+    total = sum(int(q["points"] or 1) for q in questions) or 1
+    score_points = 0
+    for q in questions:
+        given = str(answers.get(str(q["id"]), answers.get(q["id"], ""))).strip()
+        if given == str(q["correct_answer"] or "").strip():
+            score_points += int(q["points"] or 1)
+    score = round(score_points / total * 100, 2)
+    passed = score >= 70
+    con.execute(
+        "INSERT INTO lms_attempts(assignment_id,score,passed,answers) VALUES(?,?,?,?)",
+        (int(assignment_id), score, passed, json.dumps(answers, ensure_ascii=False)),
+    )
+    con.execute(
+        """
+        UPDATE lms_assignments
+        SET progress=CASE WHEN ? THEN 100 ELSE GREATEST(progress,50) END,
+            status=CASE WHEN ? THEN 'completed' ELSE 'in_progress' END,
+            completed_at=CASE WHEN ? THEN CURRENT_TIMESTAMP ELSE completed_at END
+        WHERE id=?
+        """,
+        (passed, passed, passed, int(assignment_id)),
+    )
+    certificate_no = None
+    if passed:
+        import uuid
+        certificate_no = "PN-" + uuid.uuid4().hex[:10].upper()
+        con.execute(
+            """
+            INSERT INTO lms_certificates(admin_id,course_id,certificate_no,expires_at)
+            SELECT ?, course_id, ?, CURRENT_TIMESTAMP + INTERVAL '365 days'
+            FROM lms_assignments WHERE id=?
+            """,
+            (int(admin_id), certificate_no, int(assignment_id)),
+        )
+    con.commit()
+    con.close()
+    return {"score": score, "passed": passed, "total_questions": len(questions), "certificate_no": certificate_no}
+
+
+def get_lms_full():
+    con = get_connection()
+    try:
+        courses = con.execute("SELECT * FROM lms_courses ORDER BY id").fetchall()
+        lessons = con.execute("SELECT * FROM lms_lessons ORDER BY course_id,position,id").fetchall()
+        tests = con.execute("SELECT * FROM lms_tests ORDER BY lesson_id,id").fetchall()
+        tasks = con.execute("SELECT * FROM lms_practical_tasks ORDER BY course_id,id").fetchall()
+        exams = con.execute("SELECT * FROM lms_exams ORDER BY course_id,id").fetchall()
+        return {
+            "courses": [dict(x) for x in courses],
+            "lessons": [dict(x) for x in lessons],
+            "tests": [dict(x) for x in tests],
+            "practical_tasks": [dict(x) for x in tasks],
+            "exams": [dict(x) for x in exams],
+        }
+    finally:
+        con.close()

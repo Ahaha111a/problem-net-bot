@@ -27,7 +27,9 @@ from database import (
     publish_story, reject_story, log_admin_action,
     get_support_metrics, get_support_queue, get_category_stats, get_publication_hour_stats,
     get_funnel_stats, get_security_events, get_publication_queue, auto_plan_stories,
-    create_repost_job, get_repost_jobs,
+    create_repost_job, get_repost_jobs, record_kpi_event,
+    founder_dashboard, get_ai_model_configs, set_ai_model_config, get_ai_model_health,
+    get_ai_safety_events, get_deployment_events, get_lms_full, submit_lms_test,
 )
 from ai import analyze_story, moderate_story
 from post_generator import create_post
@@ -94,14 +96,22 @@ def auth(request, allowed=None):
         raise web.HTTPForbidden(text='Admin access required')
     role = get_admin_role(uid)
     # Fired employees lose access immediately, even if their old role remains in admin_roles.
+    con = None
     try:
-        row = get_connection().execute('SELECT status FROM employee_profiles WHERE admin_id=?', (uid,)).fetchone()
+        con = get_connection()
+        row = con.execute('SELECT status FROM employee_profiles WHERE admin_id=?', (uid,)).fetchone()
         if row and row['status'] == 'fired':
             raise web.HTTPForbidden(text='Доступ сотрудника отключён')
     except web.HTTPException:
         raise
     except Exception:
         pass
+    finally:
+        if con is not None:
+            try:
+                con.close()
+            except Exception:
+                pass
     if allowed and role not in allowed:
         raise web.HTTPForbidden(text='Insufficient role')
     return uid
@@ -198,7 +208,7 @@ async def story_edit(request):
         return web.json_response({'ok':False,'locked':True,'admin_id':existing_lock['admin_id'],'expires_at':existing_lock['expires_at']}, status=409)
     text=str(payload.get('text', row['text']))[:20000]
     post=str(payload.get('post_text', row['post_text'] or ''))[:10000]
-    update_story_content(sid,text,post,uid); log_admin_action(uid,'miniapp_edit_story',story_id=sid,user_id=row['user_id'])
+    update_story_content(sid,text,post,uid); record_kpi_event(uid,'edit',0,correction=bool(row['post_text'] and post != row['post_text'])); log_admin_action(uid,'miniapp_edit_story',story_id=sid,user_id=row['user_id'])
     return web.json_response({'story':_json(get_story(sid))})
 
 async def story_ai(request):
@@ -234,14 +244,14 @@ async def story_publish(request):
     if not text: raise web.HTTPBadRequest(text='Post is empty')
     bot=request.app['bot']
     sent=await bot.send_message(CHANNEL_ID,text,reply_markup=channel_story_keyboard(sid,None))
-    publish_story(sid,sent.message_id); log_admin_action(uid,'miniapp_publish',story_id=sid,user_id=row['user_id'])
+    publish_story(sid,sent.message_id); record_kpi_event(uid,'publish'); log_admin_action(uid,'miniapp_publish',story_id=sid,user_id=row['user_id'])
     return web.json_response({'story':_json(get_story(sid)),'message_id':sent.message_id})
 
 async def story_reject(request):
     uid=auth(request, {'owner','moderator','editor'}); sid=int(request.match_info['id']); row=get_story(sid)
     if not row: raise web.HTTPNotFound()
     payload=await request.json(); reason=str(payload.get('reason',''))[:1000]
-    reject_story(sid,reason); log_admin_action(uid,'miniapp_reject',story_id=sid,user_id=row['user_id'])
+    reject_story(sid,reason); record_kpi_event(uid,'reject'); log_admin_action(uid,'miniapp_reject',story_id=sid,user_id=row['user_id'])
     return web.json_response({'story':_json(get_story(sid))})
 
 async def story_schedule(request):
@@ -343,7 +353,7 @@ async def dialog_message(request):
     p=await request.json(); text=str(p.get('text','')).strip()
     if not text: raise web.HTTPBadRequest(text='Empty message')
     if d['status']!='open': raise web.HTTPBadRequest(text='Dialog closed')
-    add_support_message(did,uid,'admin',text[:4000])
+    add_support_message(did,uid,'admin',text[:4000]); record_kpi_event(uid,'support_response')
     try:
         await request.app['bot'].send_message(d['user_id'], '💬 <b>Сообщение поддержки:</b>\n\n'+text[:4000], parse_mode='HTML')
     except Exception as e:
@@ -490,7 +500,13 @@ async def employee_role_api(request):
 async def employee_status_api(request):
  uid=auth(request, {'owner'}); p=await request.json(); set_status(int(request.match_info['id']),str(p['status']),uid,str(p.get('reason',''))); return web.json_response({'ok':True})
 async def employee_permission_api(request):
- uid=auth(request, {'owner'}); p=await request.json(); set_permission(int(request.match_info['id']),str(p['permission']),bool(p.get('enabled')),uid); return web.json_response({'ok':True})
+ uid=auth(request, {'owner'})
+ p=await request.json()
+ try:
+  set_permission(int(request.match_info['id']),str(p['permission']),bool(p.get('enabled')),uid)
+ except PermissionError as exc:
+  raise web.HTTPConflict(text=str(exc))
+ return web.json_response({'ok':True})
 async def lms_api(request):
  auth(request, {'owner','moderator','analyst'}); return web.json_response({'courses':_rows(courses()),'assignments':_rows(assignments())})
 async def lms_assign_api(request):
@@ -500,6 +516,148 @@ async def lms_update_api(request):
 async def leaderboard_api(request):
  auth(request, {'owner','analyst','moderator'}); return web.json_response({'items':leaderboard(int(request.query.get('days','30')))})
 
+
+async def founder_page(request):
+    auth(request, {'owner'})
+    return web.FileResponse(WEB_DIR / 'founder.html')
+
+
+async def founder_api(request):
+    uid = auth(request, {'owner'})
+    redis_status = {"status": "offline"}
+    redis_url = os.getenv("REDIS_URL", "").strip()
+    if redis_url:
+        try:
+            from redis.asyncio import Redis
+            r = Redis.from_url(redis_url, decode_responses=True)
+            await r.ping()
+            queue = os.getenv("AI_QUEUE_NAME", "problem-net:ai")
+            redis_status = {
+                "status": "online",
+                "queue_length": await r.xlen(queue),
+                "worker_heartbeats": len(await r.keys(f"{queue}:worker:*:heartbeat")),
+            }
+            await r.aclose()
+        except Exception as exc:
+            redis_status = {"status": "error", "details": str(exc)}
+    return web.json_response({
+        "ok": True,
+        "founder_id": uid,
+        "dashboard": founder_dashboard(),
+        "ai_models": _rows(get_ai_model_configs()),
+        "ai_health": _rows(get_ai_model_health()),
+        "deployments": _rows(get_deployment_events(50)),
+        "safety": _rows(get_ai_safety_events(limit=50)),
+        "settings": _rows(get_all_settings()),
+        "ai_checks": _rows(get_ai_checks()),
+        "redis": redis_status,
+    })
+
+
+async def ai_control_api(request):
+    uid = auth(request, {'owner'})
+    if request.method == "GET":
+        return web.json_response({
+            "models": _rows(get_ai_model_configs()),
+            "health": _rows(get_ai_model_health()),
+            "checks": _rows(get_ai_checks()),
+            "queue": _rows(get_ai_priority_queue(100)),
+        })
+    payload = await request.json()
+    model = str(payload.get("model", "")).strip()
+    if not model:
+        raise web.HTTPBadRequest(text="model required")
+    set_ai_model_config(
+        model=model,
+        enabled=bool(payload.get("enabled", True)),
+        priority=int(payload.get("priority", 100)),
+        max_tokens=int(payload.get("max_tokens", 1800)),
+        temperature=float(payload.get("temperature", 0.2)),
+        admin_id=uid,
+    )
+    log_admin_action(uid, "ai_model_config_update", details=json.dumps(payload, ensure_ascii=False))
+    return web.json_response({"ok": True, "models": _rows(get_ai_model_configs())})
+
+
+async def ai_safety_api(request):
+    uid = auth(request, {'owner', 'moderator', 'editor'})
+    sid = int(request.match_info["id"])
+    row = get_story(sid)
+    if not row:
+        raise web.HTTPNotFound()
+    from ai import run_safety_pipeline
+    result = await run_safety_pipeline(row["text"], row["post_text"] or "", sid)
+    log_admin_action(uid, "ai_safety_pipeline", story_id=sid, user_id=row["user_id"],
+                     details=json.dumps(result, ensure_ascii=False))
+    return web.json_response({"result": result, "events": _rows(get_ai_safety_events(sid))})
+
+
+async def lms_full_api(request):
+    auth(request, {'owner', 'moderator', 'analyst'})
+    return web.json_response(get_lms_full())
+
+
+async def lms_manage_api(request):
+    uid = auth(request, {'owner'})
+    p = await request.json()
+    action = str(p.get("action", "")).strip()
+    con = get_connection()
+    try:
+        if action == "create_course":
+            cur = con.execute(
+                """
+                INSERT INTO lms_courses(title,position,required,required_for_permission,deadline_days,active)
+                VALUES(?,?,?,?,?,true) RETURNING id
+                """,
+                (str(p["title"]), p.get("position"), bool(p.get("required")), p.get("required_for_permission"), int(p.get("deadline_days", 7))),
+            )
+            new_id = cur.fetchone()[0]
+        elif action == "create_lesson":
+            cur = con.execute(
+                "INSERT INTO lms_lessons(course_id,title,content,position) VALUES(?,?,?,?) RETURNING id",
+                (int(p["course_id"]), str(p["title"]), p.get("content", ""), int(p.get("position", 0))),
+            )
+            new_id = cur.fetchone()[0]
+        elif action == "create_test":
+            cur = con.execute(
+                "INSERT INTO lms_tests(lesson_id,question,options,correct_answer,points) VALUES(?,?,?,?,?) RETURNING id",
+                (int(p["lesson_id"]), str(p["question"]), json.dumps(p.get("options", []), ensure_ascii=False), str(p["correct_answer"]), int(p.get("points", 1))),
+            )
+            new_id = cur.fetchone()[0]
+        elif action == "create_practical":
+            cur = con.execute(
+                "INSERT INTO lms_practical_tasks(course_id,title,instructions,max_score,required) VALUES(?,?,?,?,?) RETURNING id",
+                (int(p["course_id"]), str(p["title"]), str(p.get("instructions", "")), int(p.get("max_score", 100)), bool(p.get("required"))),
+            )
+            new_id = cur.fetchone()[0]
+        elif action == "create_exam":
+            cur = con.execute(
+                "INSERT INTO lms_exams(course_id,title,pass_score,attempt_limit,required) VALUES(?,?,?,?,?) RETURNING id",
+                (int(p["course_id"]), str(p["title"]), int(p.get("pass_score", 70)), int(p.get("attempt_limit", 3)), bool(p.get("required"))),
+            )
+            new_id = cur.fetchone()[0]
+        else:
+            raise web.HTTPBadRequest(text="Unknown LMS action")
+        con.commit()
+    finally:
+        con.close()
+    log_admin_action(uid, "lms_manage", details=json.dumps(p, ensure_ascii=False))
+    return web.json_response({"ok": True, "id": new_id})
+
+
+async def lms_test_submit_api(request):
+    uid = auth(request, {'owner', 'moderator', 'editor'})
+    payload = await request.json()
+    result = submit_lms_test(int(payload["assignment_id"]), payload.get("answers", {}), uid)
+    log_admin_action(uid, "lms_test_attempt", details=json.dumps(result, ensure_ascii=False))
+    return web.json_response({"ok": True, **result})
+
+
+async def deployment_api(request):
+    auth(request, {'owner', 'analyst'})
+    return web.json_response({"items": _rows(get_deployment_events(100))})
+
+
 def create_app(bot):
     app=web.Application(middlewares=[rate_limit_middleware, error_middleware])
     app['bot']=bot
@@ -507,6 +665,8 @@ def create_app(bot):
     app.router.add_get('/health', health)
     app.router.add_get('/admin', index)
     app.router.add_get('/admin/', index)
+    app.router.add_get('/founder', founder_page)
+    app.router.add_get('/founder/', founder_page)
     app.router.add_get('/admin/{name}', static_file)
     app.router.add_get('/assets/{name}', static_file)
     app.router.add_get('/admin/api/ping', api_health)
@@ -557,6 +717,7 @@ def create_app(bot):
     app.router.add_put('/admin/api/employee/{id}/permission', employee_permission_api)
     app.router.add_get('/admin/api/lms', lms_api)
     app.router.add_post('/admin/api/lms/assign', lms_assign_api)
+    app.router.add_post('/admin/api/lms/manage', lms_manage_api)
     app.router.add_put('/admin/api/lms/assignment/{id}', lms_update_api)
     app.router.add_get('/admin/api/leaderboard', leaderboard_api)
     app.router.add_get('/admin/api/training', training)
@@ -566,6 +727,11 @@ def create_app(bot):
     app.router.add_post('/admin/api/goals', goal_update_api)
     app.router.add_get('/admin/api/ai-priority', priority_queue_api)
     app.router.add_post('/admin/api/ai-priority', priority_create_api)
+    app.router.add_route('*', '/admin/api/ai-control', ai_control_api)
+    app.router.add_post('/admin/api/story/{id}/ai-safety', ai_safety_api)
+    app.router.add_get('/admin/api/lms/full', lms_full_api)
+    app.router.add_post('/admin/api/lms/test/submit', lms_test_submit_api)
+    app.router.add_get('/admin/api/deployments', deployment_api)
     return app
 
 

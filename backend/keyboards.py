@@ -1,6 +1,6 @@
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, KeyboardButton, ReplyKeyboardMarkup, WebAppInfo
 
-from config import ADMIN_MINIAPP_URL, CHANNEL_ID
+from config import ADMIN_MINIAPP_URL, FOUNDER_URL, CHANNEL_ID
 
 
 def main_keyboard() -> ReplyKeyboardMarkup:
@@ -20,6 +20,8 @@ def admin_keyboard() -> ReplyKeyboardMarkup:
     rows = []
     if ADMIN_MINIAPP_URL:
         rows.append([KeyboardButton(text="🖥 Админ-панель", web_app=WebAppInfo(url=ADMIN_MINIAPP_URL))])
+    if FOUNDER_URL:
+        rows.append([KeyboardButton(text="👑 Кабинет основателя", web_app=WebAppInfo(url=FOUNDER_URL))])
     rows.extend([
         [KeyboardButton(text="⏳ Модерация"), KeyboardButton(text="📊 Статистика")],
         [KeyboardButton(text="📁 Все истории"), KeyboardButton(text="⬅️ Назад")],

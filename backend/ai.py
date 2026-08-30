@@ -5,7 +5,6 @@ from typing import Any
 from dotenv import load_dotenv
 from groq import AsyncGroq
 
-from database import get_setting, ai_check_enabled, log_system_error
 
 
 load_dotenv()
@@ -14,6 +13,44 @@ load_dotenv()
 # =========================================================
 # GROQ CONFIG
 # =========================================================
+
+# Database is optional inside the standalone AI Worker. The worker can
+# run purely from environment variables; the user/moderator services use
+# PostgreSQL-backed settings when available.
+def _db_setting(key, default=None):
+    if os.getenv("AI_WORKER_MODE", "0") == "1":
+        env_map = {
+            "ai_model": "GROQ_MODEL",
+            "ai_fallback_model": "GROQ_FALLBACK_MODEL",
+            "ai_temperature": "AI_TEMPERATURE",
+            "ai_max_tokens": "AI_MAX_TOKENS",
+        }
+        return os.getenv(env_map.get(key, key.upper()), default)
+    try:
+        from database import get_setting
+        return get_setting(key, default)
+    except Exception:
+        return os.getenv(key.upper(), default)
+
+
+def _db_check_enabled(key):
+    if os.getenv("AI_WORKER_MODE", "0") == "1":
+        return os.getenv(f"AI_CHECK_{key.upper()}", "1").strip() == "1"
+    try:
+        from database import ai_check_enabled
+        return ai_check_enabled(key)
+    except Exception:
+        return os.getenv(f"AI_CHECK_{key.upper()}", "1").strip() == "1"
+
+
+def _log_error(service, message, details="", level="error"):
+    try:
+        from database import log_system_error
+        log_system_error(service, message, details, level)
+    except Exception:
+        print(f"⚠️ {service}: {message} {details}")
+
+
 
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "").strip()
 
@@ -47,6 +84,7 @@ async def _ask_groq_direct(
     messages: list[dict[str, str]],
     temperature: float = 0.3,
     max_tokens: int = 2000,
+    model_override: str | None = None,
 ) -> str:
     """Непосредственный запрос к Groq. Вызывается только worker'ом или при аварийном режиме."""
     import asyncio
@@ -56,14 +94,14 @@ async def _ask_groq_direct(
     if not api_key:
         raise RuntimeError("GROQ_API_KEY не задан в Railway Variables.")
 
-    model = get_setting("ai_model", GROQ_MODEL) or GROQ_MODEL
-    fallback = get_setting("ai_fallback_model", os.getenv("GROQ_FALLBACK_MODEL", "llama-3.1-8b-instant"))
+    model = (model_override or _db_setting("ai_model", GROQ_MODEL) or GROQ_MODEL).strip()
+    fallback = _db_setting("ai_fallback_model", os.getenv("GROQ_FALLBACK_MODEL", "llama-3.1-8b-instant"))
     try:
-        temp = float(get_setting("ai_temperature", str(temperature)))
+        temp = float(_db_setting("ai_temperature", str(temperature)))
     except Exception:
         temp = temperature
     try:
-        tokens = int(get_setting("ai_max_tokens", str(max_tokens)))
+        tokens = int(_db_setting("ai_max_tokens", str(max_tokens)))
     except Exception:
         tokens = max_tokens
 
@@ -100,7 +138,7 @@ async def _ask_groq_direct(
             return response.choices[0].message.content.strip()
         raise RuntimeError("Groq вернул пустой ответ.")
     except Exception as first_error:
-        log_system_error("groq", str(first_error), f"model={model}", "error")
+        _log_error("groq", str(first_error), f"model={model}", "error")
         status = getattr(first_error, "status_code", None)
         # 401/403 are configuration errors: switching models cannot fix the key.
         if status in (401, 403):
@@ -111,7 +149,7 @@ async def _ask_groq_direct(
                 if response.choices and response.choices[0].message.content:
                     return response.choices[0].message.content.strip()
             except Exception as second_error:
-                log_system_error("groq", str(second_error), f"fallback={fallback}", "error")
+                _log_error("groq", str(second_error), f"fallback={fallback}", "error")
         raise first_error
 
 
@@ -129,7 +167,7 @@ async def _ask_groq(
         job_id = await enqueue_ai_job(messages, temperature, max_tokens)
         return await wait_ai_result(job_id, int(os.getenv("AI_JOB_TIMEOUT", "300")))
     except Exception as queue_error:
-        log_system_error("ai-queue", str(queue_error), "Аварийный прямой режим", "warning")
+        _log_error("ai-queue", str(queue_error), "Аварийный прямой режим", "warning")
         if os.getenv("AI_EMERGENCY_DIRECT", "1") == "1":
             return await _ask_groq_direct(messages, temperature, max_tokens)
         raise
@@ -140,7 +178,7 @@ async def _ask_groq(
 # =========================================================
 
 async def analyze_story(story: str) -> str:
-    if not ai_check_enabled("analysis"):
+    if not _db_check_enabled("analysis"):
         return "ℹ️ Проверка анализа ИИ отключена в настройках."
 
     system_prompt = """
@@ -212,7 +250,7 @@ async def moderate_story(
     story: str,
     post_text: str = "",
 ) -> str:
-    if not ai_check_enabled("moderation"):
+    if not _db_check_enabled("moderation"):
         return "ℹ️ ИИ-модерация отключена в настройках."
 
     system_prompt = """
@@ -305,7 +343,7 @@ async def check_story_quality(
     story: str,
     post_text: str = "",
 ) -> str:
-    if not ai_check_enabled("quality"):
+    if not _db_check_enabled("quality"):
         return "ℹ️ Проверка качества ИИ отключена в настройках."
 
     system_prompt = """
@@ -387,7 +425,7 @@ async def moderate_story_json(
     story: str,
     post_text: str = "",
 ) -> dict[str, Any]:
-    if not ai_check_enabled("structured_moderation"):
+    if not _db_check_enabled("structured_moderation"):
         return {"risk":"medium","personal_data":"possible","dangerous_content":False,"identification_risk":"medium","post_quality":"review","issues":["Проверка отключена"],"recommendation":"manual_review","reason":"Проверка отключена в настройках проекта."}
 
     system_prompt = """
@@ -479,6 +517,127 @@ async def moderate_story_json(
         }
 
     return data
+
+
+# =========================================================
+# AI SAFETY PIPELINE
+# =========================================================
+
+async def run_safety_pipeline(story: str, post_text: str = "", story_id: int | None = None) -> dict[str, Any]:
+    """Run layered safety checks.
+
+    Primary model performs structured moderation; the fallback model is used as
+    an independent second opinion. A disagreement always becomes manual review.
+    """
+    from time import perf_counter
+
+    primary = (_db_setting("ai_model", GROQ_MODEL) or GROQ_MODEL).strip()
+    secondary = (_db_setting("ai_fallback_model", os.getenv("GROQ_FALLBACK_MODEL", "llama-3.1-8b-instant")) or "").strip()
+
+    started = perf_counter()
+    primary_result = await moderate_story_json(story, post_text)
+    primary_latency = int((perf_counter() - started) * 1000)
+    try:
+        from database import set_ai_model_health
+        set_ai_model_health(primary, "ok", primary_latency, 0, "Safety pipeline primary model")
+    except Exception:
+        pass
+
+    risk_map = {"low": 0.15, "medium": 0.45, "high": 0.75, "critical": 0.98}
+    primary_risk = risk_map.get(str(primary_result.get("risk", "medium")).lower(), 0.5)
+    primary_conf = 0.8 if primary_result.get("recommendation") else 0.55
+
+    _log_error("ai-safety", "primary safety result", f"story={story_id} model={primary} risk={primary_risk}", "info")
+
+    second_result = None
+    second_error = None
+    if secondary and secondary != primary:
+        try:
+            second_prompt = [
+                {
+                    "role": "system",
+                    "content": (
+                        "Ты независимый AI safety reviewer. Верни только JSON с ключами "
+                        "risk (low|medium|high|critical), confidence (0..1), "
+                        "recommendation (publish|manual_review|reject), issues (array). "
+                        "Не ставь диагнозов. Не принимай решение вместо человека."
+                    ),
+                },
+                {"role": "user", "content": f"ИСТОРИЯ:\n{story}\n\nПОСТ:\n{post_text or 'нет'}"},
+            ]
+            raw = await _ask_groq_direct(
+                second_prompt,
+                temperature=0.0,
+                max_tokens=900,
+                model_override=secondary,
+            )
+            cleaned = raw.strip().removeprefix("```json").removesuffix("```").strip()
+            second_result = json.loads(cleaned)
+            try:
+                from database import set_ai_model_health
+                set_ai_model_health(secondary, "ok", 0, 0, "Safety pipeline second opinion")
+            except Exception:
+                pass
+        except Exception as exc:
+            second_error = str(exc)
+            try:
+                from database import set_ai_model_health
+                set_ai_model_health(secondary, "error", 0, 1, str(exc))
+            except Exception:
+                pass
+
+    disagreement = False
+    if second_result:
+        disagreement = (
+            str(second_result.get("risk", "medium")).lower() != str(primary_result.get("risk", "medium")).lower()
+            or str(second_result.get("recommendation", "manual_review")).lower()
+            != str(primary_result.get("recommendation", "manual_review")).lower()
+        )
+
+    recommendation = str(primary_result.get("recommendation", "manual_review")).lower()
+    if disagreement or second_error:
+        recommendation = "manual_review"
+    if primary_risk >= 0.9:
+        recommendation = "manual_review"
+
+    result = {
+        "primary_model": primary,
+        "secondary_model": secondary or None,
+        "primary": primary_result,
+        "secondary": second_result,
+        "disagreement": disagreement,
+        "secondary_error": second_error,
+        "risk_score": primary_risk,
+        "confidence": primary_conf if not disagreement else min(primary_conf, 0.55),
+        "recommendation": recommendation,
+        "latency_ms": primary_latency,
+        "hallucination_control": {
+            "source_post_comparison": bool(post_text),
+            "required_human_review": recommendation == "manual_review",
+        },
+    }
+
+    if story_id is not None:
+        try:
+            from database import log_ai_safety_event
+            log_ai_safety_event(
+                story_id, "structured_moderation", primary,
+                recommendation != "reject", primary_risk,
+                result["confidence"], primary_result.get("issues", []),
+                json.dumps(result, ensure_ascii=False),
+            )
+            if second_result:
+                log_ai_safety_event(
+                    story_id, "second_opinion", secondary,
+                    recommendation != "reject", risk_map.get(str(second_result.get("risk", "medium")).lower(), 0.5),
+                    float(second_result.get("confidence", 0.6)),
+                    second_result.get("issues", []),
+                    json.dumps(second_result, ensure_ascii=False),
+                )
+        except Exception:
+            pass
+
+    return result
 
 
 # =========================================================

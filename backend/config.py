@@ -31,6 +31,10 @@ AI_EMERGENCY_DIRECT = os.getenv("AI_EMERGENCY_DIRECT", "1").strip() == "1"
 BACKUP_DIR = os.getenv("BACKUP_DIR", "/app/backups").strip() or "/app/backups"
 
 ADMIN_MINIAPP_URL = os.getenv("ADMIN_MINIAPP_URL", "").strip()
+_mini_base = ADMIN_MINIAPP_URL.rstrip("/")
+if _mini_base.endswith("/admin"):
+    _mini_base = _mini_base[:-6]
+FOUNDER_URL = os.getenv("FOUNDER_URL", (_mini_base + "/founder") if _mini_base else "").strip()
 TIMEZONE = os.getenv("TIMEZONE", "Europe/Moscow").strip() or "Europe/Moscow"
 
 # AI defaults can be changed from Mini App without changing code.

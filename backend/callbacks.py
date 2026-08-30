@@ -7,7 +7,8 @@ from database import (
     get_story, publish_story, reject_story, get_story_reaction_counts,
     set_story_reaction, get_user_story_reaction, create_support_dialog,
     get_open_dialog_by_user, add_support_message, lock_story, get_story_lock,
-    unlock_story, update_story_content, log_admin_action, get_admin_role,
+    is_admin_active,
+    unlock_story, update_story_content, log_admin_action, get_admin_role, record_kpi_event,
 )
 from keyboards import moderation_keyboard, channel_story_keyboard
 
@@ -27,7 +28,7 @@ def get_channel_message_link(bot, message_id: int) -> str | None:
 
 @callback_router.callback_query(F.data.startswith("story:publish:"))
 async def publish_callback(query: CallbackQuery):
-    if query.from_user.id not in ADMIN_IDS:
+    if query.from_user.id not in ADMIN_IDS or not is_admin_active(query.from_user.id):
         await query.answer("Нет доступа", show_alert=True)
         return
     story_id = int(query.data.rsplit(":", 1)[1])
@@ -37,6 +38,7 @@ async def publish_callback(query: CallbackQuery):
     try:
         sent = await query.bot.send_message(CHANNEL_ID, story["post_text"] or story["text"])
         publish_story(story_id, sent.message_id)
+        record_kpi_event(query.from_user.id, 'publish', max(0, int((__import__('time').time()) - story['created_at'].timestamp())) if hasattr(story['created_at'], 'timestamp') else 0)
         link = get_channel_message_link(query.bot, sent.message_id)
         await query.message.edit_reply_markup(reply_markup=channel_story_keyboard(story_id, link, get_story_reaction_counts(story_id)))
         await query.answer("Опубликовано")
@@ -48,13 +50,14 @@ async def publish_callback(query: CallbackQuery):
 
 @callback_router.callback_query(F.data.startswith("story:reject:"))
 async def reject_callback(query: CallbackQuery):
-    if query.from_user.id not in ADMIN_IDS:
+    if query.from_user.id not in ADMIN_IDS or not is_admin_active(query.from_user.id):
         await query.answer("Нет доступа", show_alert=True); return
     story_id = int(query.data.rsplit(":", 1)[1])
     story = get_story(story_id)
     if not story:
         await query.answer("История не найдена", show_alert=True); return
     reject_story(story_id, "Отклонено модератором")
+    record_kpi_event(query.from_user.id, 'reject', max(0, int((__import__('time').time()) - story['created_at'].timestamp())) if hasattr(story['created_at'], 'timestamp') else 0)
     await query.answer("История отклонена")
     await query.message.edit_text((query.message.text or "") + "\n\n❌ ОТКЛОНЕНО", reply_markup=None)
     log_admin_action(query.from_user.id, "reject", story_id=story_id, user_id=story["user_id"])
@@ -62,7 +65,7 @@ async def reject_callback(query: CallbackQuery):
 
 @callback_router.callback_query(F.data.startswith("story:lock:"))
 async def lock_callback(query: CallbackQuery):
-    if query.from_user.id not in ADMIN_IDS:
+    if query.from_user.id not in ADMIN_IDS or not is_admin_active(query.from_user.id):
         await query.answer("Нет доступа", show_alert=True); return
     story_id = int(query.data.rsplit(":", 1)[1])
     row = lock_story(story_id, query.from_user.id)
@@ -73,7 +76,7 @@ async def lock_callback(query: CallbackQuery):
 
 @callback_router.callback_query(F.data.startswith("story:ai:"))
 async def ai_callback(query: CallbackQuery):
-    if query.from_user.id not in ADMIN_IDS:
+    if query.from_user.id not in ADMIN_IDS or not is_admin_active(query.from_user.id):
         await query.answer("Нет доступа", show_alert=True); return
     await query.answer("ИИ-проверка запускается из Mini App", show_alert=True)
 

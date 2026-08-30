@@ -44,7 +44,7 @@ async def publish_scheduled(bot, story):
         if not text: raise RuntimeError('Пустой пост')
         sent=await bot.send_message(CHANNEL_ID,text,reply_markup=channel_story_keyboard(sid))
         publish_story(sid,sent.message_id)
-        link=await get_channel_message_link(bot,sent.message_id)
+        link=get_channel_message_link(bot,sent.message_id)
         if link:
             await sent.edit_reply_markup(reply_markup=channel_story_keyboard(sid,link,get_story_reaction_counts(sid)))
             await bot.send_message(story['user_id'],'🎉 <b>Ваша история опубликована!</b>\n\nСпасибо, что поделились 💙',parse_mode='HTML',reply_markup=published_story_keyboard(link,sid,get_story_reaction_counts(sid)))
@@ -74,7 +74,7 @@ async def repost_worker(bot):
                 story=get_story(job['story_id'])
                 try:
                     sent=await bot.send_message(CHANNEL_ID,story['post_text'],reply_markup=channel_story_keyboard(story['id']))
-                    link=await get_channel_message_link(bot,sent.message_id)
+                    link=get_channel_message_link(bot,sent.message_id)
                     if link: await sent.edit_reply_markup(reply_markup=channel_story_keyboard(story['id'],link,get_story_reaction_counts(story['id'])))
                     finish_repost_job(job['id'],'published')
                 except Exception as e:
@@ -141,10 +141,24 @@ async def event_notifications(bot):
         await asyncio.sleep(60)
 
 
+async def _init_db_with_retry():
+    last_error = None
+    for attempt in range(1, 6):
+        try:
+            init_db()
+            ensure_platform_defaults()
+            return
+        except Exception as exc:
+            last_error = exc
+            logging.exception("DB startup attempt %s/5 failed", attempt)
+            await asyncio.sleep(min(10, attempt * 2))
+    raise RuntimeError(f"PostgreSQL/Alembic startup failed: {last_error}") from last_error
+
+
 async def main():
     if not MODERATOR_BOT_TOKEN:
         raise RuntimeError('MODERATOR_BOT_TOKEN не задан. Создай второго Telegram-бота и добавь его токен в Railway.')
-    init_db(); ensure_platform_defaults()
+    await _init_db_with_retry()
     print(f'🗄️ DB backend: {"PostgreSQL" if DATABASE_URL else "SQLite"}')
     print(f'🔴 Redis: {"подключён" if REDIS_URL else "не задан"}')
     bot=Bot(MODERATOR_BOT_TOKEN,default=DefaultBotProperties(parse_mode=ParseMode.HTML))

@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Founder Control Center — Проблем нет</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<style>
+:root{color-scheme:dark}*{box-sizing:border-box}body{margin:0;background:#07080b;color:#f4f6f8;font-family:system-ui,-apple-system,sans-serif}
+header{position:sticky;top:0;z-index:5;background:#0b0d12ee;backdrop-filter:blur(14px);padding:16px;border-bottom:1px solid #242833}
+h1{font-size:21px;margin:0}.muted{color:#8f98a8;font-size:13px}.wrap{max-width:1100px;margin:auto;padding:14px}.grid{display:grid;grid-template-columns:repeat(2,1fr);gap:10px}
+.card{background:#10131a;border:1px solid #252b38;border-radius:18px;padding:14px;margin-bottom:12px}.metric{font-size:27px;font-weight:800;margin-top:4px}
+.nav{display:flex;gap:8px;overflow:auto;margin-bottom:12px}.btn{border:0;border-radius:12px;padding:11px 14px;background:#1b202b;color:#fff;font-weight:700}.primary{background:#2c6df6}.danger{background:#7c2832}
+.chart{display:flex;align-items:end;gap:5px;height:180px;padding-top:12px}.bar{flex:1;min-width:5px;background:#3d7bff;border-radius:5px 5px 0 0;position:relative}.bar span{position:absolute;bottom:100%;font-size:9px;color:#aeb8c8}.table{width:100%;border-collapse:collapse;font-size:13px}.table td,.table th{padding:8px;border-bottom:1px solid #242833;text-align:left}
+.badge{display:inline-block;padding:4px 8px;border-radius:99px;background:#1b2a42;color:#9ec2ff}.ok{color:#5ee89b}.warn{color:#ffd166}.bad{color:#ff7886}.loader{text-align:center;padding:45px;color:#8f98a8}
+</style></head>
+<body>
+<header><h1>👑 Founder Control Center</h1><div id="me" class="muted">Загрузка…</div></header>
+<div class="wrap">
+<div id="app" class="loader">Подключение…</div>
+</div>
+<script>
+const tg=window.Telegram?.WebApp;tg?.ready();tg?.expand();
+const headers={'X-Telegram-Init-Data':tg?.initData||''};
+async function api(path,opt={}){const r=await fetch(path,{...opt,headers:{...headers,...(opt.headers||{}),'Content-Type':'application/json'}});const t=await r.text();let d;try{d=JSON.parse(t)}catch{throw Error(t||r.status)}if(!r.ok)throw Error(d.error||d.details||t);return d}
+const esc=s=>String(s??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m]));
+function bars(items,key,label){
+ if(!items?.length)return '<div class="muted">Нет данных</div>';
+ const max=Math.max(...items.map(x=>Number(x[key]||0)),1);
+ return '<div class="chart">'+items.map(x=>`<div class="bar" style="height:${Math.max(4,Number(x[key]||0)/max*150)}px"><span>${esc(x[label]??'')}</span></div>`).join('')+'</div>';
+}
+function render(d){
+ const s=d.dashboard?.stats||{};
+ document.getElementById('me').textContent=`Основатель • ID ${d.founder_id}`;
+ document.getElementById('app').innerHTML=`
+ <div class="grid">
+  <div class="card"><div class="muted">Пользователи</div><div class="metric">${s.users||0}</div></div>
+  <div class="card"><div class="muted">Истории</div><div class="metric">${s.stories||0}</div></div>
+  <div class="card"><div class="muted">В очереди AI</div><div class="metric">${s.ai_queue||0}</div></div>
+  <div class="card"><div class="muted">Активные модераторы</div><div class="metric">${d.dashboard.active_moderators||0}</div></div>
+ </div>
+ <div class="card"><h3>🟢 Live infrastructure</h3><div>PostgreSQL: <span class="ok">connected</span></div><div>Redis: <span class="${d.redis?.status==='online'?'ok':'bad'}">${esc(d.redis?.status||'unknown')}</span> • Queue: ${d.redis?.queue_length??0} • Workers: ${d.redis?.worker_heartbeats??0}</div></div>
+ <div class="nav">
+  <button class="btn primary" onclick="overview()">📊 KPI</button>
+  <button class="btn" onclick="ai()">🤖 AI Control</button>
+  <button class="btn" onclick="lms()">🎓 LMS</button>
+  <button class="btn" onclick="deploy()">🚀 Deploy</button>
+  <button class="btn" onclick="safety()">🛡 Safety</button>
+ </div>
+ <div id="section"></div>`;
+ overview(d);
+}
+function overview(d){
+ const x=d||window.DATA;const db=x.dashboard;
+ document.getElementById('section').innerHTML=`
+ <div class="card"><h3>📈 Публикации за 30 дней</h3>${bars(db.publications,'count','day')}</div>
+ <div class="card"><h3>👥 Рост пользователей</h3>${bars(db.users,'count','day')}</div>
+ <div class="card"><h3>🕒 Нагрузка по часам</h3>${bars(db.hourly_load,'count','hour')}</div>
+ <div class="card"><h3>⏱ Среднее ожидание</h3><div class="metric">${Math.round((db.average_wait_seconds||0)/60)} мин</div></div>`;
+}
+async function ai(){try{const d=await api('/admin/api/ai-control');document.getElementById('section').innerHTML=`<div class="card"><h3>🤖 AI Control Center</h3><table class="table"><tr><th>Модель</th><th>Статус</th><th>Приоритет</th></tr>${(d.models||[]).map(x=>`<tr><td>${esc(x.model)}</td><td>${x.enabled?'🟢':'🔴'}</td><td>${x.priority}</td></tr>`).join('')}</table><h3>Health</h3>${(d.health||[]).map(x=>`<div>${esc(x.model)} — <span class="${x.status==='ok'?'ok':'warn'}">${esc(x.status)}</span> • ${x.latency_ms} ms</div>`).join('')||'<div class="muted">Пока нет проверок</div>'}</div>`}catch(e){err(e)}}
+async function lms(){try{const d=await api('/admin/api/lms/full');document.getElementById('section').innerHTML=`<div class="card"><h3>🎓 LMS</h3>${(d.courses||[]).map(c=>`<div class="card"><b>${esc(c.title)}</b><div class="muted">Позиция: ${esc(c.position||'все')} • ${c.required?'обязательный':'дополнительный'}</div><div>Уроков: ${(d.lessons||[]).filter(x=>x.course_id===c.id).length} • Тестов: ${(d.tests||[]).filter(x=>(d.lessons||[]).some(l=>l.id===x.lesson_id&&l.course_id===c.id)).length}</div></div>`).join('')||'<div class="muted">Курсы пока не созданы</div>'}</div>`}catch(e){err(e)}}
+async function deploy(){try{const d=await api('/admin/api/deployments');document.getElementById('section').innerHTML=`<div class="card"><h3>🚀 Staging → Production</h3><div class="muted">Deployment telemetry</div><table class="table"><tr><th>Среда</th><th>Статус</th><th>Commit</th><th>Время</th></tr>${(d.items||[]).map(x=>`<tr><td>${esc(x.environment)}</td><td>${esc(x.status)}</td><td>${esc((x.commit_sha||'').slice(0,8))}</td><td>${esc(x.created_at)}</td></tr>`).join('')||'<tr><td colspan="4">Нет событий</td></tr>'}</table></div>`}catch(e){err(e)}}
+async function safety(){try{const d=await api('/founder');document.getElementById('section').innerHTML=`<div class="card"><h3>🛡 AI Safety Pipeline</h3><div>Последние проверки: ${(d.safety||[]).length}</div>${(d.safety||[]).slice(0,20).map(x=>`<div style="padding:8px 0;border-bottom:1px solid #242833"><b>#${x.story_id||'—'}</b> ${esc(x.stage)} • ${esc(x.model)} • ${x.passed?'🟢':'🔴'}<div class="muted">${esc(x.details||'')}</div></div>`).join('')||'<div class="muted">Проверок пока нет</div>'}</div>`}catch(e){err(e)}}
+function err(e){document.getElementById('section').innerHTML=`<div class="card bad">❌ ${esc(e.message)}</div>`}
+async function load(){try{window.DATA=await api('/founder');render(window.DATA)}catch(e){err(e)}}
+load();
+</script></body></html>
