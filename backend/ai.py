@@ -56,7 +56,7 @@ GROQ_API_KEY = os.getenv("GROQ_API_KEY", "").strip()
 
 GROQ_MODEL = os.getenv("GROQ_MODEL", "openai/gpt-oss-120b").strip()
 GROQ_FALLBACK_MODEL = os.getenv("GROQ_FALLBACK_MODEL", "openai/gpt-oss-20b").strip()
-GROQ_SAFETY_MODEL = os.getenv("GROQ_SAFETY_MODEL", "openai/gpt-oss-safeguard-20b").strip()
+GROQ_SAFETY_MODEL = os.getenv("GROQ_SAFETY_MODEL", "").strip()
 GROQ_MODELS = [
     x.strip()
     for x in os.getenv(
@@ -83,6 +83,43 @@ client = (
 )
 
 
+def _db_prompt(name: str, default: str) -> str:
+    """Return the active prompt version from PostgreSQL, with a safe fallback."""
+    try:
+        from ops import active_prompt
+        return active_prompt(name, default)
+    except Exception:
+        return default
+
+
+def _shadow_enabled() -> bool:
+    if os.getenv("AI_SHADOW_MODE", "0").strip() == "1":
+        return True
+    try:
+        from ops import policy_config
+        return bool(policy_config("ai_shadow_mode", {"enabled": False}).get("_enabled")) and bool(policy_config("ai_shadow_mode", {}).get("enabled", False))
+    except Exception:
+        return False
+
+
+async def _run_shadow(messages, model: str, story_id=None, stage="generation", temperature=0.2, max_tokens=1800):
+    if not model or not _shadow_enabled():
+        return
+    import time
+    started=time.perf_counter()
+    try:
+        result = await _ask_groq_direct(messages, temperature, max_tokens, model_override=model)
+        latency=int((time.perf_counter()-started)*1000)
+        from ops import log_shadow_run
+        log_shadow_run(story_id, stage, model, result, latency, None)
+    except Exception as exc:
+        try:
+            from ops import log_shadow_run
+            log_shadow_run(story_id, stage, model, None, int((time.perf_counter()-started)*1000), str(exc))
+        except Exception:
+            pass
+
+
 # =========================================================
 # COMMON GROQ REQUEST
 # =========================================================
@@ -102,7 +139,7 @@ async def _ask_groq_direct(
         raise RuntimeError("GROQ_API_KEY не задан в Railway Variables.")
 
     configured = []
-    if not model_override:
+    if not model_override and os.getenv("AI_WORKER_MODE", "0") != "1":
         try:
             from database import get_ai_model_configs
             configured = [
@@ -168,6 +205,17 @@ async def _ask_groq_direct(
                     set_ai_model_health(candidate, "ok", 0, 0, "Successful request")
                 except Exception:
                     pass
+                # Shadow mode is non-blocking and never affects the user result.
+                if _shadow_enabled():
+                    shadow_model = os.getenv("AI_SHADOW_MODEL", "").strip()
+                    if not shadow_model:
+                        try:
+                            from ops import policy_config
+                            shadow_model = str(policy_config("ai_shadow_mode", {}).get("model", "")).strip()
+                        except Exception:
+                            shadow_model = ""
+                    if shadow_model and shadow_model != candidate:
+                        asyncio.create_task(_run_shadow(messages, shadow_model, None, "generation", temp, tokens))
                 return text
             raise RuntimeError("Groq вернул пустой ответ.")
         except Exception as exc:
@@ -249,6 +297,8 @@ async def analyze_story(story: str) -> str:
 📌 Рекомендация:
 <короткая рекомендация для администратора>
 """
+
+    system_prompt = _db_prompt("analysis", system_prompt)
 
     user_prompt = f"""
 Проанализируй следующую историю пользователя.
@@ -340,6 +390,8 @@ async def moderate_story(
 <краткое объяснение решения>
 """
 
+    system_prompt = _db_prompt("moderation", system_prompt)
+
     user_prompt = f"""
 ИСХОДНАЯ ИСТОРИЯ:
 
@@ -422,6 +474,8 @@ async def check_story_quality(
 <краткое объяснение>
 """
 
+    system_prompt = _db_prompt("quality", system_prompt)
+
     user_prompt = f"""
 ИСХОДНАЯ ИСТОРИЯ:
 
@@ -484,6 +538,8 @@ async def moderate_story_json(
 
 Не принимай окончательное решение вместо администратора.
 """
+
+    system_prompt = _db_prompt("structured_moderation", system_prompt)
 
     user_prompt = f"""
 История:
@@ -572,16 +628,26 @@ async def run_safety_pipeline(story: str, post_text: str = "", story_id: int | N
     deterministic = [name for name, pattern in patterns.items() if re.search(pattern, story, re.I)]
 
     generation_models = []
-    try:
-        from database import get_ai_model_configs
-        generation_models = [
-            str(r["model"]).strip() for r in get_ai_model_configs()
-            if bool(r["enabled"]) and str(r["model"]).strip() != GROQ_SAFETY_MODEL
-        ]
-    except Exception:
-        pass
+    # Prefer the models explicitly configured in Railway. This prevents stale
+    # model rows from older migrations from hijacking the current fallback chain.
+    env_models = []
+    for model in [GROQ_MODEL, GROQ_FALLBACK_MODEL, *GROQ_MODELS]:
+        model = str(model or '').strip()
+        if model and model not in env_models:
+            env_models.append(model)
+    if env_models:
+        generation_models = env_models
+    else:
+        try:
+            from database import get_ai_model_configs
+            generation_models = [
+                str(r["model"]).strip() for r in get_ai_model_configs()
+                if bool(r["enabled"]) and (not GROQ_SAFETY_MODEL or str(r["model"]).strip() != GROQ_SAFETY_MODEL)
+            ]
+        except Exception:
+            pass
     if not generation_models:
-        generation_models = list(GROQ_MODELS)
+        generation_models = [GROQ_MODEL, GROQ_FALLBACK_MODEL]
     primary = generation_models[0] if generation_models else GROQ_MODEL
     secondary = generation_models[1] if len(generation_models) > 1 else GROQ_FALLBACK_MODEL
 
@@ -616,8 +682,19 @@ async def run_safety_pipeline(story: str, post_text: str = "", story_id: int | N
     disagreement = len(set(recommendations)) > 1 or len(set(str(x.get("risk", "medium")).lower() for x in results)) > 1
 
     max_risk = max([primary_risk, *risks, 0.0])
+    manual_threshold, reject_threshold, require_second = 0.75, 0.95, True
+    try:
+        from ops import policy_config
+        policy = policy_config("safety_policy", {})
+        manual_threshold = float(policy.get("manual_review_risk", manual_threshold))
+        reject_threshold = float(policy.get("reject_risk", reject_threshold))
+        require_second = bool(policy.get("require_second_opinion", require_second))
+    except Exception:
+        pass
     recommendation = "publish"
-    if deterministic or max_risk >= 0.75 or disagreement or second_error or safety_error:
+    if max_risk >= reject_threshold:
+        recommendation = "reject"
+    elif deterministic or max_risk >= manual_threshold or (require_second and (disagreement or second_error or safety_error)):
         recommendation = "manual_review"
     if any(str(x.get("personal_data", "none")).lower() == "found" for x in results) or any(str(x.get("identification_risk", "low")).lower() == "high" for x in results):
         recommendation = "manual_review"

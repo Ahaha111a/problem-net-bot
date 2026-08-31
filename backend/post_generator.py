@@ -1,12 +1,8 @@
-from ai import _ask_groq
+from ai import _ask_groq, _db_prompt
 
 
 async def create_post(story: str):
-    return await _ask_groq(
-        messages=[
-            {
-                "role": "system",
-                "content": """
+    default_prompt = """
 Ты редактор Telegram-канала «Проблем нет».
 
 Твоя задача — превращать истории людей в качественные анонимные посты.
@@ -45,7 +41,10 @@ async def create_post(story: str):
 
 #ПроблемНет
 """
-            },
+    system_prompt = _db_prompt("post_generation", default_prompt)
+    return await _ask_groq(
+        messages=[
+            {"role": "system", "content": system_prompt},
             {"role": "user", "content": story},
         ],
         temperature=0.25,

@@ -227,6 +227,11 @@ def init_db():
             lock_con.execute("SELECT pg_advisory_unlock(%s)", (lock_key,))
 
     ensure_platform_defaults()
+    try:
+        from ops import ensure_ops_defaults
+        ensure_ops_defaults()
+    except Exception as exc:
+        print(f"⚠️ Ops defaults skipped: {exc}")
 
 
 # =========================================================
@@ -969,8 +974,14 @@ def create_support_dialog(
     )
 
     connection.commit()
-
     connection.close()
+
+    # Balance support workload immediately after creating the dialog.
+    try:
+        from ops import assign_workload
+        assign_workload(dialog_id)
+    except Exception as exc:
+        print(f"⚠️ Workload assignment skipped for dialog {dialog_id}: {exc}")
 
     return dialog_id
 
@@ -1204,9 +1215,15 @@ def close_dialog(
         ),
     )
 
+    row = connection.execute("SELECT assigned_admin_id FROM support_dialogs WHERE id=?", (dialog_id,)).fetchone()
     connection.commit()
-
     connection.close()
+    try:
+        if row and row[0]:
+            from ops import release_workload
+            release_workload(int(row[0]))
+    except Exception as exc:
+        print(f"⚠️ Workload release skipped for dialog {dialog_id}: {exc}")
 
 
 def mark_dialog_read_by_admin(
@@ -1620,25 +1637,32 @@ def ensure_platform_defaults():
             (admin_id,),
         )
 
-    # Keep the database model registry aligned with currently supported Groq models.
-    model_defaults = [
-        (os.getenv('GROQ_MODEL', 'openai/gpt-oss-120b'), True, 10, 2200, 0.2),
-        (os.getenv('GROQ_FALLBACK_MODEL', 'openai/gpt-oss-20b'), True, 20, 1800, 0.2),
-        ('qwen/qwen3.6-27b', True, 30, 1800, 0.2),
-        (os.getenv('GROQ_SAFETY_MODEL', 'openai/gpt-oss-safeguard-20b'), True, 5, 1200, 0.0),
-    ]
-    for model, enabled, priority, max_tokens, temperature in model_defaults:
+    # Keep the DB registry aligned with the models explicitly configured in Railway.
+    configured_models = [x.strip() for x in os.getenv('GROQ_MODELS', '').split(',') if x.strip()]
+    primary = os.getenv('GROQ_MODEL', '').strip()
+    fallback = os.getenv('GROQ_FALLBACK_MODEL', '').strip()
+    safety = os.getenv('GROQ_SAFETY_MODEL', '').strip()
+    ordered = []
+    for model in [primary, fallback, *configured_models, safety]:
+        if model and model not in ordered:
+            ordered.append(model)
+    for idx, model in enumerate(ordered):
+        enabled = model != safety or bool(safety)
         con.execute(
             """
             INSERT INTO ai_model_configs(model,enabled,priority,max_tokens,temperature)
             VALUES(?,?,?,?,?)
-            ON CONFLICT(model) DO UPDATE SET
-              enabled=EXCLUDED.enabled, priority=EXCLUDED.priority,
-              max_tokens=EXCLUDED.max_tokens, temperature=EXCLUDED.temperature
+            ON CONFLICT(model) DO NOTHING
             """,
-            (model, enabled, priority, max_tokens, temperature),
+            (model, enabled, 10 + idx * 10, 1800 if idx else 2200, 0.0 if model == safety else 0.2),
         )
-    con.execute("UPDATE ai_model_configs SET enabled=false WHERE model IN ('llama-3.1-8b-instant','llama-3.3-70b-versatile')")
+    # Do not silently disable user-selected models. Only migrate legacy defaults.
+    if primary:
+        con.execute("UPDATE app_settings SET value=? WHERE key='ai_model' AND value IN ('openai/gpt-oss-120b','llama-3.3-70b-versatile','llama-3.1-8b-instant')", (primary,))
+    if fallback:
+        con.execute("UPDATE app_settings SET value=? WHERE key='ai_fallback_model' AND value IN ('openai/gpt-oss-20b','llama-3.1-8b-instant','llama-3.3-70b-versatile')", (fallback,))
+    # Disable only legacy defaults from older versions; never delete user data.
+    con.execute("UPDATE ai_model_configs SET enabled=false WHERE model IN ('openai/gpt-oss-120b','openai/gpt-oss-20b','openai/gpt-oss-safeguard-20b') AND model NOT IN (%s,%s,%s)", (primary or '__none__', fallback or '__none__', safety or '__none__'))
     con.commit(); con.close()
 
 

@@ -6,6 +6,7 @@ from aiohttp import web
 
 # Worker receives jobs from Redis and calls AI providers directly.
 os.environ["AI_QUEUE_ENABLED"] = "0"
+os.environ["AI_WORKER_MODE"] = "1"
 
 from ai import _ask_groq_direct
 from ai_queue import worker_loop

@@ -35,6 +35,10 @@ from ai import analyze_story, moderate_story
 from post_generator import create_post
 from keyboards import channel_story_keyboard, published_story_keyboard
 from rate_limit import allowed as rate_limit_allowed
+from ops import (
+    workload, sla_dashboard, prompts, save_prompt, activate_prompt, policies, set_policy,
+    shadow_runs, incidents, create_incident, resolve_incident, railway_rollback, record_rollback,
+)
 from staff_ops import employees,employee,change_role,set_status,set_permission,permissions,role_history,promotion_history,violations,courses,assignments,assign_course,update_assignment,leaderboard
 
 TZ = ZoneInfo('Europe/Moscow')
@@ -121,9 +125,15 @@ async def index(request):
     return web.FileResponse(WEB_DIR / 'index.html')
 
 async def health(request):
+    db_ok = False
+    try:
+        con = get_connection(); con.execute('SELECT 1').fetchone(); con.close(); db_ok = True
+    except Exception as exc:
+        return web.json_response({'ok': False, 'service': 'problem-net-admin', 'database': str(exc)}, status=503)
     return web.json_response({
-        'ok': True,
+        'ok': db_ok,
         'service': 'problem-net-admin',
+        'database': 'ok',
         'timezone': 'Europe/Moscow',
     })
 
@@ -554,6 +564,14 @@ async def founder_api(request):
         "settings": _rows(get_all_settings()),
         "ai_checks": _rows(get_ai_checks()),
         "redis": redis_status,
+        "ops": {
+            "workload": _rows(workload()),
+            "sla": sla_dashboard(),
+            "prompts": _rows(prompts()),
+            "policies": _rows(policies()),
+            "incidents": _rows(incidents(100)),
+            "shadow": _rows(shadow_runs(100)),
+        },
     })
 
 
@@ -661,6 +679,89 @@ async def deployment_api(request):
     return web.json_response({"items": _rows(get_deployment_events(100))})
 
 
+
+async def workload_api(request):
+    auth(request, {'owner','moderator','analyst'})
+    return web.json_response({'items': _rows(workload())})
+
+
+async def sla_dashboard_api(request):
+    auth(request, {'owner','moderator','analyst'})
+    return web.json_response(sla_dashboard())
+
+
+async def prompts_api(request):
+    uid = auth(request, {'owner'})
+    if request.method == 'GET':
+        return web.json_response({'items': _rows(prompts(request.query.get('name')) )})
+    payload = await request.json()
+    row = save_prompt(str(payload['name']).strip(), str(payload['prompt_text']), uid, bool(payload.get('activate', True)))
+    log_admin_action(uid, 'prompt_version_create', details=json.dumps(payload, ensure_ascii=False))
+    return web.json_response({'ok': True, 'prompt': _json(row)})
+
+
+async def prompt_activate_api(request):
+    uid = auth(request, {'owner'})
+    activate_prompt(int(request.match_info['id']), uid)
+    log_admin_action(uid, 'prompt_version_activate', details=str(request.match_info['id']))
+    return web.json_response({'ok': True})
+
+
+async def policies_api(request):
+    uid = auth(request, {'owner'})
+    if request.method == 'GET':
+        return web.json_response({'items': _rows(policies())})
+    payload = await request.json()
+    set_policy(str(payload['key']), str(payload.get('title', payload['key'])), payload.get('config', {}), bool(payload.get('enabled', True)), uid)
+    log_admin_action(uid, 'policy_update', details=json.dumps(payload, ensure_ascii=False))
+    return web.json_response({'ok': True})
+
+
+async def incidents_api(request):
+    uid = auth(request, {'owner','moderator','analyst'})
+    return web.json_response({'items': _rows(incidents(200, request.query.get('status')))})
+
+
+async def incident_create_api(request):
+    uid = auth(request, {'owner','moderator'})
+    payload = await request.json()
+    severity = str(payload.get('severity','medium')).lower()
+    iid = create_incident(str(payload.get('service','unknown')), severity, str(payload['title']), str(payload.get('details','')), payload.get('deployment_id'))
+    rollback_result = None
+    if severity == 'critical' and os.getenv('AUTO_ROLLBACK_ENABLED','0').strip() == '1' and payload.get('rollback_deployment_id'):
+        target = str(payload['rollback_deployment_id']).strip()
+        rollback_result = await railway_rollback(target)
+        record_rollback(iid, str(payload.get('service','unknown')), target, 'success' if rollback_result.get('ok') else 'failed', json.dumps(rollback_result, ensure_ascii=False))
+    log_admin_action(uid, 'incident_create', details=json.dumps({**payload, 'rollback': rollback_result}, ensure_ascii=False))
+    return web.json_response({'ok': True, 'incident_id': iid, 'rollback': rollback_result})
+
+
+async def incident_resolve_api(request):
+    uid = auth(request, {'owner','moderator'})
+    payload = await request.json()
+    resolve_incident(int(request.match_info['id']), uid, str(payload.get('note','')))
+    log_admin_action(uid, 'incident_resolve', details=str(request.match_info['id']))
+    return web.json_response({'ok': True})
+
+
+async def rollback_api(request):
+    uid = auth(request, {'owner'})
+    payload = await request.json()
+    target = str(payload.get('target_deployment_id','')).strip()
+    if not target:
+        raise web.HTTPBadRequest(text='target_deployment_id required')
+    result = await railway_rollback(target)
+    incident_id = payload.get('incident_id')
+    if incident_id:
+        record_rollback(int(incident_id), str(payload.get('service','unknown')), target, 'success' if result.get('ok') else 'failed', json.dumps(result, ensure_ascii=False))
+    log_admin_action(uid, 'railway_rollback', details=json.dumps({'target':target,'result':result}, ensure_ascii=False))
+    return web.json_response(result)
+
+
+async def shadow_api(request):
+    auth(request, {'owner','analyst'})
+    return web.json_response({'items': _rows(shadow_runs(200))})
+
 def create_app(bot):
     app=web.Application(middlewares=[rate_limit_middleware, error_middleware])
     app['bot']=bot
@@ -670,6 +771,7 @@ def create_app(bot):
     app.router.add_get('/admin/', index)
     app.router.add_get('/founder', founder_page)
     app.router.add_get('/founder/', founder_page)
+    app.router.add_get('/founder/api', founder_api)
     app.router.add_get('/admin/{name}', static_file)
     app.router.add_get('/assets/{name}', static_file)
     app.router.add_get('/admin/api/ping', api_health)
@@ -736,6 +838,16 @@ def create_app(bot):
     app.router.add_get('/admin/api/lms/full', lms_full_api)
     app.router.add_post('/admin/api/lms/test/submit', lms_test_submit_api)
     app.router.add_get('/admin/api/deployments', deployment_api)
+    app.router.add_get('/admin/api/ops/workload', workload_api)
+    app.router.add_get('/admin/api/ops/sla', sla_dashboard_api)
+    app.router.add_route('*', '/admin/api/ops/prompts', prompts_api)
+    app.router.add_post('/admin/api/ops/prompts/{id}/activate', prompt_activate_api)
+    app.router.add_route('*', '/admin/api/ops/policies', policies_api)
+    app.router.add_get('/admin/api/ops/incidents', incidents_api)
+    app.router.add_post('/admin/api/ops/incidents', incident_create_api)
+    app.router.add_post('/admin/api/ops/incidents/{id}/resolve', incident_resolve_api)
+    app.router.add_post('/admin/api/ops/rollback', rollback_api)
+    app.router.add_get('/admin/api/ops/shadow', shadow_api)
     return app
 
 
