@@ -6,6 +6,8 @@ aiohttp>=3.10,<4
 tzdata>=2025.2
 psutil>=6.1,<7
 psycopg[binary]>=3.2,<4
+# Compatibility for any stale Alembic/SQLAlchemy process that still resolves postgresql:// to psycopg2.
+psycopg2-binary>=2.9,<3
 redis>=5.2,<6
 alembic>=1.16,<2
 SQLAlchemy>=2.0,<3
