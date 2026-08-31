@@ -11,8 +11,10 @@ def _required(name: str) -> str:
     return value
 
 
-BOT_TOKEN = _required("BOT_TOKEN")
+BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()
 MODERATOR_BOT_TOKEN = os.getenv("MODERATOR_BOT_TOKEN", "").strip()
+if not BOT_TOKEN and not MODERATOR_BOT_TOKEN:
+    raise RuntimeError("Не задан BOT_TOKEN или MODERATOR_BOT_TOKEN.")
 
 ADMIN_IDS = [
     int(user_id.strip())
@@ -39,5 +41,14 @@ TIMEZONE = os.getenv("TIMEZONE", "Europe/Moscow").strip() or "Europe/Moscow"
 
 # AI defaults can be changed from Mini App without changing code.
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "").strip()
-GROQ_MODEL = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile").strip()
-GROQ_FALLBACK_MODEL = os.getenv("GROQ_FALLBACK_MODEL", "llama-3.1-8b-instant").strip()
+GROQ_MODEL = os.getenv("GROQ_MODEL", "openai/gpt-oss-120b").strip()
+GROQ_FALLBACK_MODEL = os.getenv("GROQ_FALLBACK_MODEL", "openai/gpt-oss-20b").strip()
+GROQ_SAFETY_MODEL = os.getenv("GROQ_SAFETY_MODEL", "openai/gpt-oss-safeguard-20b").strip()
+GROQ_MODELS = [
+    x.strip()
+    for x in os.getenv(
+        "GROQ_MODELS",
+        f"{GROQ_MODEL},{GROQ_FALLBACK_MODEL},qwen/qwen3.6-27b",
+    ).split(",")
+    if x.strip()
+]

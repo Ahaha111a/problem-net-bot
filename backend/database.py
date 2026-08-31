@@ -1594,8 +1594,9 @@ def ensure_platform_defaults():
     con = get_connection()
     _ensure_platform_tables(con)
     defaults = {
-        'ai_model': os.getenv('GROQ_MODEL', 'llama-3.3-70b-versatile'),
-        'ai_fallback_model': os.getenv('GROQ_FALLBACK_MODEL', 'llama-3.1-8b-instant'),
+        'ai_model': os.getenv('GROQ_MODEL', 'openai/gpt-oss-120b'),
+        'ai_fallback_model': os.getenv('GROQ_FALLBACK_MODEL', 'openai/gpt-oss-20b'),
+        'ai_safety_model': os.getenv('GROQ_SAFETY_MODEL', 'openai/gpt-oss-safeguard-20b'),
         'ai_temperature': '0.2',
         'ai_max_tokens': '1800',
         'support_notification_enabled': '1',
@@ -1618,6 +1619,26 @@ def ensure_platform_defaults():
             """,
             (admin_id,),
         )
+
+    # Keep the database model registry aligned with currently supported Groq models.
+    model_defaults = [
+        (os.getenv('GROQ_MODEL', 'openai/gpt-oss-120b'), True, 10, 2200, 0.2),
+        (os.getenv('GROQ_FALLBACK_MODEL', 'openai/gpt-oss-20b'), True, 20, 1800, 0.2),
+        ('qwen/qwen3.6-27b', True, 30, 1800, 0.2),
+        (os.getenv('GROQ_SAFETY_MODEL', 'openai/gpt-oss-safeguard-20b'), True, 5, 1200, 0.0),
+    ]
+    for model, enabled, priority, max_tokens, temperature in model_defaults:
+        con.execute(
+            """
+            INSERT INTO ai_model_configs(model,enabled,priority,max_tokens,temperature)
+            VALUES(?,?,?,?,?)
+            ON CONFLICT(model) DO UPDATE SET
+              enabled=EXCLUDED.enabled, priority=EXCLUDED.priority,
+              max_tokens=EXCLUDED.max_tokens, temperature=EXCLUDED.temperature
+            """,
+            (model, enabled, priority, max_tokens, temperature),
+        )
+    con.execute("UPDATE ai_model_configs SET enabled=false WHERE model IN ('llama-3.1-8b-instant','llama-3.3-70b-versatile')")
     con.commit(); con.close()
 
 
@@ -1904,6 +1925,31 @@ def log_ai_safety_event(story_id, stage, model, passed, risk_score=None, confide
     con.close()
 
 
+def get_latest_safety_decision(story_id):
+    con = get_connection()
+    try:
+        row = con.execute(
+            "SELECT * FROM ai_safety_events WHERE story_id=? ORDER BY created_at DESC LIMIT 1",
+            (int(story_id),),
+        ).fetchone()
+        if not row:
+            return None
+        try:
+            payload = json.loads(row['details'] or '{}')
+        except Exception:
+            payload = {}
+        return {
+            'recommendation': payload.get('recommendation', 'manual_review'),
+            'risk_score': float(payload.get('risk_score', row['risk_score'] or 0.5) or 0.5),
+            'details': payload,
+            'stage': row['stage'],
+            'created_at': row['created_at'],
+        }
+    finally:
+        con.close()
+
+
+
 def get_ai_safety_events(story_id=None, limit=200):
     con = get_connection()
     if story_id is None:
@@ -2056,21 +2102,63 @@ def submit_lms_test(assignment_id, answers, admin_id):
         """,
         (passed, passed, passed, int(assignment_id)),
     )
-    certificate_no = None
-    if passed:
-        import uuid
-        certificate_no = "PN-" + uuid.uuid4().hex[:10].upper()
-        con.execute(
-            """
-            INSERT INTO lms_certificates(admin_id,course_id,certificate_no,expires_at)
-            SELECT ?, course_id, ?, CURRENT_TIMESTAMP + INTERVAL '365 days'
-            FROM lms_assignments WHERE id=?
-            """,
-            (int(admin_id), certificate_no, int(assignment_id)),
-        )
     con.commit()
     con.close()
-    return {"score": score, "passed": passed, "total_questions": len(questions), "certificate_no": certificate_no}
+    return {"score": score, "passed": passed, "total_questions": len(questions)}
+
+
+def get_kpi_dashboard(days=30):
+    con = get_connection()
+    try:
+        days = max(1, min(int(days), 365))
+        daily = con.execute(
+            """
+            SELECT day,
+                   COALESCE(SUM(moderated),0) AS moderated,
+                   COALESCE(SUM(published),0) AS published,
+                   COALESCE(SUM(errors),0) AS errors,
+                   COALESCE(SUM(dangerous),0) AS dangerous,
+                   COALESCE(SUM(support_responses),0) AS support_responses,
+                   COALESCE(SUM(response_seconds),0) AS response_seconds,
+                   COALESCE(SUM(moderation_seconds),0) AS moderation_seconds,
+                   COALESCE(SUM(post_corrections),0) AS post_corrections
+            FROM moderator_kpi_daily
+            WHERE day >= (CURRENT_TIMESTAMP AT TIME ZONE 'Europe/Moscow')::date - (?::int)
+            GROUP BY day ORDER BY day
+            """, (days - 1,),
+        ).fetchall()
+        rows = con.execute(
+            """
+            SELECT admin_id,
+                   COALESCE(SUM(moderated),0) AS moderated,
+                   COALESCE(SUM(published),0) AS published,
+                   COALESCE(SUM(errors),0) AS errors,
+                   COALESCE(SUM(dangerous),0) AS dangerous,
+                   COALESCE(SUM(support_responses),0) AS support_responses,
+                   COALESCE(SUM(response_seconds),0) AS response_seconds,
+                   COALESCE(SUM(moderation_seconds),0) AS moderation_seconds,
+                   COALESCE(SUM(post_corrections),0) AS post_corrections
+            FROM moderator_kpi_daily
+            WHERE day >= (CURRENT_TIMESTAMP AT TIME ZONE 'Europe/Moscow')::date - (?::int)
+            GROUP BY admin_id
+            """, (days - 1,),
+        ).fetchall()
+        ranking=[]
+        for r in rows:
+            moderated=float(r['moderated'] or 0); published=float(r['published'] or 0)
+            errors=float(r['errors'] or 0); dangerous=float(r['dangerous'] or 0)
+            corrections=float(r['post_corrections'] or 0)
+            avg_mod=(float(r['moderation_seconds'] or 0)/moderated) if moderated else 0
+            quality=max(0.0, 100.0 - errors/max(moderated,1)*100.0 - dangerous/max(moderated,1)*35.0 - corrections/max(published,1)*25.0)
+            speed=max(0.0, 100.0 - min(100.0, avg_mod/600.0*100.0)) if moderated else 50.0
+            volume=min(100.0, published*5.0 + moderated*1.0)
+            score=round(quality*0.60 + speed*0.20 + volume*0.20, 2)
+            ranking.append({**dict(r), 'avg_moderation_seconds': round(avg_mod,1), 'quality': round(quality,2), 'speed': round(speed,2), 'score': score})
+        ranking.sort(key=lambda x:(-x['score'], -int(x['published'] or 0)))
+        return {'days': days, 'daily':[dict(r) for r in daily], 'ranking':ranking}
+    finally:
+        con.close()
+
 
 
 def get_lms_full():
@@ -2081,12 +2169,14 @@ def get_lms_full():
         tests = con.execute("SELECT * FROM lms_tests ORDER BY lesson_id,id").fetchall()
         tasks = con.execute("SELECT * FROM lms_practical_tasks ORDER BY course_id,id").fetchall()
         exams = con.execute("SELECT * FROM lms_exams ORDER BY course_id,id").fetchall()
+        assignments = con.execute("SELECT a.*, c.title AS course_title FROM lms_assignments a JOIN lms_courses c ON c.id=a.course_id ORDER BY a.id DESC LIMIT 500").fetchall()
         return {
             "courses": [dict(x) for x in courses],
             "lessons": [dict(x) for x in lessons],
             "tests": [dict(x) for x in tests],
             "practical_tasks": [dict(x) for x in tasks],
             "exams": [dict(x) for x in exams],
+            "assignments": [dict(x) for x in assignments],
         }
     finally:
         con.close()

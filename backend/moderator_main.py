@@ -15,7 +15,7 @@ from database import (
     get_story_reaction_counts, log_admin_action, get_due_repost_jobs, claim_repost_job,
     finish_repost_job, get_story, backup_database, get_complaints, get_sla_breaches,
     create_event_notification_once, set_system_health, log_system_error, integrity_check,
-    report_was_sent, mark_report_sent, get_extended_stats, get_moderator_performance,
+    report_was_sent, mark_report_sent, get_extended_stats, get_moderator_performance, get_latest_safety_decision,
 )
 from moderator_entry import router as moderator_entry_router
 from handlers import router
@@ -40,6 +40,11 @@ async def publish_scheduled(bot, story):
     sid=story['id']
     if not claim_scheduled_story(sid): return
     try:
+        safety = get_latest_safety_decision(sid)
+        if safety and safety.get('recommendation') != 'publish':
+            release_scheduled_story(sid,(datetime.now(ZoneInfo('UTC'))+timedelta(minutes=30)).isoformat())
+            log_system_error('scheduler', 'Safety gate blocked scheduled publication', f'story={sid} recommendation={safety.get("recommendation")}')
+            return
         text=(story['post_text'] or '').strip()
         if not text: raise RuntimeError('Пустой пост')
         sent=await bot.send_message(CHANNEL_ID,text,reply_markup=channel_story_keyboard(sid))

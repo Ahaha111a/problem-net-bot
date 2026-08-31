@@ -26,24 +26,29 @@ def set_permission(admin_id,permission,enabled,changed_by):
  c=get_connection()
  if enabled:
   required = c.execute(
-   "SELECT id,title FROM lms_courses WHERE required_for_permission=? AND active=true ORDER BY id LIMIT 1",
+   "SELECT id,title,deadline_days FROM lms_courses WHERE required_for_permission=? AND active=true ORDER BY id",
    (permission,),
-  ).fetchone()
-  if required:
+  ).fetchall()
+  missing=[]
+  for course in required:
    passed = c.execute(
-    """
-    SELECT 1 FROM lms_assignments
-    WHERE admin_id=? AND course_id=? AND status='completed'
-    LIMIT 1
-    """,
-    (admin_id, required["id"]),
+    "SELECT 1 FROM lms_assignments WHERE admin_id=? AND course_id=? AND status='completed' LIMIT 1",
+    (admin_id, course['id']),
    ).fetchone()
    if not passed:
-    c.close()
-    raise PermissionError(f"Сначала нужно завершить обязательный курс: {required['title']}")
+    days = int(course['deadline_days'] or 7)
+    c.execute(
+     "INSERT INTO lms_assignments(admin_id,course_id,due_at) VALUES(?,?,CURRENT_TIMESTAMP + (?::int * INTERVAL '1 day')) ON CONFLICT(admin_id,course_id) DO NOTHING",
+     (admin_id, course['id'], days),
+    )
+    missing.append(course['title'])
+  if missing:
+   c.commit(); c.close()
+   raise PermissionError("Курс автоматически назначен. Сначала завершите: " + ", ".join(missing))
  c.execute("INSERT INTO employee_permissions(admin_id,permission,enabled,updated_by,updated_at) VALUES(?,?,?,?,CURRENT_TIMESTAMP) ON CONFLICT(admin_id,permission) DO UPDATE SET enabled=EXCLUDED.enabled,updated_by=EXCLUDED.updated_by,updated_at=CURRENT_TIMESTAMP",(admin_id,permission,bool(enabled),changed_by))
  c.commit(); c.close()
  log_admin_action(changed_by,'employee_permission_change',user_id=admin_id,details=f'{permission}={enabled}')
+
 def courses(position=None):
  c=get_connection(); r=c.execute("SELECT * FROM lms_courses WHERE active=true AND (? IS NULL OR position IS NULL OR position=?) ORDER BY id",(position,position)).fetchall(); c.close(); return r
 def assignments(admin_id=None):

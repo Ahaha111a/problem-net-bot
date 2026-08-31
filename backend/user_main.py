@@ -26,6 +26,8 @@ async def _init_db_with_retry():
 
 
 async def main():
+    if not BOT_TOKEN:
+        raise RuntimeError("BOT_TOKEN не задан. Добавьте токен пользовательского бота в Railway Variables.")
     await _init_db_with_retry()
     bot = Bot(BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
     dp = Dispatcher()

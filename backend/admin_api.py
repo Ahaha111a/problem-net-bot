@@ -29,7 +29,7 @@ from database import (
     get_funnel_stats, get_security_events, get_publication_queue, auto_plan_stories,
     create_repost_job, get_repost_jobs, record_kpi_event,
     founder_dashboard, get_ai_model_configs, set_ai_model_config, get_ai_model_health,
-    get_ai_safety_events, get_deployment_events, get_lms_full, submit_lms_test,
+    get_ai_safety_events, get_latest_safety_decision, get_deployment_events, get_kpi_dashboard, get_lms_full, submit_lms_test,
 )
 from ai import analyze_story, moderate_story
 from post_generator import create_post
@@ -240,6 +240,9 @@ async def story_moderate_ai(request):
 async def story_publish(request):
     uid=auth(request, {'owner','moderator','editor'}); sid=int(request.match_info['id']); row=get_story(sid)
     if not row: raise web.HTTPNotFound()
+    safety = get_latest_safety_decision(sid)
+    if safety and safety.get('recommendation') != 'publish' and get_admin_role(uid) != 'owner':
+        raise web.HTTPConflict(text='История требует ручной safety-проверки. Только владелец может сделать override.')
     text=(row['post_text'] or '').strip()
     if not text: raise web.HTTPBadRequest(text='Post is empty')
     bot=request.app['bot']
@@ -720,6 +723,7 @@ def create_app(bot):
     app.router.add_post('/admin/api/lms/manage', lms_manage_api)
     app.router.add_put('/admin/api/lms/assignment/{id}', lms_update_api)
     app.router.add_get('/admin/api/leaderboard', leaderboard_api)
+    app.router.add_get('/admin/api/kpi/dashboard', kpi_dashboard_api)
     app.router.add_get('/admin/api/training', training)
     app.router.add_post('/admin/api/training', training_assign_api)
     app.router.add_put('/admin/api/training/{id}', training_update_api)

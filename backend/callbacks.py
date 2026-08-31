@@ -4,7 +4,7 @@ from aiogram.fsm.context import FSMContext
 
 from config import ADMIN_IDS, CHANNEL_ID
 from database import (
-    get_story, publish_story, reject_story, get_story_reaction_counts,
+    get_story, get_latest_safety_decision, publish_story, reject_story, get_story_reaction_counts,
     set_story_reaction, get_user_story_reaction, create_support_dialog,
     get_open_dialog_by_user, add_support_message, lock_story, get_story_lock,
     is_admin_active,
@@ -36,6 +36,11 @@ async def publish_callback(query: CallbackQuery):
     if not story:
         await query.answer("История не найдена", show_alert=True); return
     try:
+        safety = get_latest_safety_decision(story_id)
+        role = get_admin_role(query.from_user.id)
+        if safety and safety.get("recommendation") != "publish" and role != "owner":
+            await query.answer("Нужна ручная safety-проверка. Владелец может сделать override.", show_alert=True)
+            return
         sent = await query.bot.send_message(CHANNEL_ID, story["post_text"] or story["text"])
         publish_story(story_id, sent.message_id)
         record_kpi_event(query.from_user.id, 'publish', max(0, int((__import__('time').time()) - story['created_at'].timestamp())) if hasattr(story['created_at'], 'timestamp') else 0)
