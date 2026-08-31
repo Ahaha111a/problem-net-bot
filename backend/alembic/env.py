@@ -2,6 +2,7 @@ from logging.config import fileConfig
 import os
 from alembic import context
 from sqlalchemy import engine_from_config, pool
+from sqlalchemy.engine import make_url
 
 config = context.config
 if config.config_file_name is not None:
@@ -14,10 +15,14 @@ if not DATABASE_URL:
 # The project uses psycopg v3, not psycopg2. SQLAlchemy otherwise defaults
 # to the psycopg2 dialect for a plain postgresql:// URL.
 def _sqlalchemy_url(url: str) -> str:
+    # Always force SQLAlchemy onto psycopg v3. This prevents the plain
+    # postgresql:// dialect from selecting psycopg2 on Railway.
     if url.startswith("postgres://"):
         return "postgresql+psycopg://" + url[len("postgres://"): ]
     if url.startswith("postgresql://"):
         return "postgresql+psycopg://" + url[len("postgresql://"): ]
+    if url.startswith("postgresql+psycopg2://"):
+        return "postgresql+psycopg://" + url[len("postgresql+psycopg2://"): ]
     return url
 
 SQLALCHEMY_URL = _sqlalchemy_url(DATABASE_URL)
