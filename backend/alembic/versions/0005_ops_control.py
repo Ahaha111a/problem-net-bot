@@ -78,44 +78,51 @@ def upgrade():
     op.create_index("ix_prompt_active", "prompt_versions", ["name", "active"])
     op.create_index("ix_incident_status_created", "incidents", ["status", "created_at"])
     op.create_index("ix_shadow_created", "ai_shadow_runs", ["created_at"])
-    # IMPORTANT: do not embed JSON literals containing ":" inside sa.text().
-    # SQLAlchemy treats colon-prefixed fragments as bind parameters, so JSON such
-    # as {"critical_minutes":15} can be compiled into %(15)s and break the
-    # migration. Pass the JSON as a bound value instead.
-    conn = op.get_bind()
-    seed_stmt = sa.text("""
+    # IMPORTANT: do not embed JSON literals directly into sa.text().
+    # SQLAlchemy interprets tokens such as :15 / :false inside text() as
+    # bind parameters. Pass the complete JSON string as a named parameter.
+    stmt = sa.text("""
         INSERT INTO policy_rules(key, title, config_json, enabled)
         VALUES (:key, :title, :config_json, :enabled)
         ON CONFLICT(key) DO NOTHING
     """)
-    seed_rows = [
-        {
-            "key": "ai_shadow_mode",
-            "title": "AI Shadow Mode",
-            "config_json": '{"enabled": false, "model": ""}',
-            "enabled": False,
-        },
-        {
-            "key": "auto_rollback",
-            "title": "Automatic rollback",
-            "config_json": '{"enabled": false, "severity": "critical"}',
-            "enabled": False,
-        },
-        {
-            "key": "safety_policy",
-            "title": "Safety policy",
-            "config_json": '{"manual_review_risk": 0.75, "reject_risk": 0.95, "require_second_opinion": true}',
-            "enabled": True,
-        },
-        {
-            "key": "sla_policy",
-            "title": "SLA policy",
-            "config_json": '{"critical_minutes": 15, "high_minutes": 30, "normal_minutes": 120, "low_minutes": 480}',
-            "enabled": True,
-        },
+    bind = op.get_bind()
+    defaults = [
+        (
+            "ai_shadow_mode",
+            "AI Shadow Mode",
+            '{"enabled":false,"model":""}',
+            False,
+        ),
+        (
+            "auto_rollback",
+            "Automatic rollback",
+            '{"enabled":false,"severity":"critical"}',
+            False,
+        ),
+        (
+            "safety_policy",
+            "Safety policy",
+            '{"manual_review_risk":0.75,"reject_risk":0.95,"require_second_opinion":true}',
+            True,
+        ),
+        (
+            "sla_policy",
+            "SLA policy",
+            '{"critical_minutes":15,"high_minutes":30,"normal_minutes":120,"low_minutes":480}',
+            True,
+        ),
     ]
-    for row in seed_rows:
-        conn.execute(seed_stmt, row)
+    for key, title, config_json, enabled in defaults:
+        bind.execute(
+            stmt,
+            {
+                "key": key,
+                "title": title,
+                "config_json": config_json,
+                "enabled": enabled,
+            },
+        )
 
 
 def downgrade():
