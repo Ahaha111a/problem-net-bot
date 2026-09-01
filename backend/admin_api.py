@@ -125,15 +125,13 @@ async def index(request):
     return web.FileResponse(WEB_DIR / 'index.html')
 
 async def health(request):
-    db_ok = False
-    try:
-        con = get_connection(); con.execute('SELECT 1').fetchone(); con.close(); db_ok = True
-    except Exception as exc:
-        return web.json_response({'ok': False, 'service': 'problem-net-admin', 'database': str(exc)}, status=503)
+    # Railway uses this endpoint as a process liveness check. Do not make it
+    # depend on PostgreSQL: Alembic runs during startup and a DB hiccup should
+    # not turn a healthy HTTP process into a failed Railway deployment.
     return web.json_response({
-        'ok': db_ok,
+        'ok': True,
         'service': 'problem-net-admin',
-        'database': 'ok',
+        'status': 'alive',
         'timezone': 'Europe/Moscow',
     })
 

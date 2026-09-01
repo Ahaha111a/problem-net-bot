@@ -27,26 +27,40 @@ async def _init_db_with_retry():
 
 
 async def _health_server():
+    # Railway healthcheck is a liveness check. It must not depend on PostgreSQL
+    # migrations, otherwise the service is reported unhealthy while Alembic is
+    # still starting (or while a transient DB connection is unavailable).
     app = web.Application()
+
     async def health(request):
-        try:
-            from database import get_connection
-            con = get_connection(); con.execute("SELECT 1").fetchone(); con.close()
-            return web.json_response({"ok": True, "service": "problem-net-user-bot", "database": "ok"})
-        except Exception as exc:
-            return web.json_response({"ok": False, "database": str(exc)}, status=503)
+        return web.json_response({
+            "ok": True,
+            "service": "problem-net-user-bot",
+            "status": "alive",
+        })
+
     app.router.add_get('/health', health)
-    runner = web.AppRunner(app); await runner.setup()
-    site = web.TCPSite(runner, '0.0.0.0', int(__import__('os').getenv('PORT','8080'))); await site.start()
+    runner = web.AppRunner(app)
+    await runner.setup()
+    port = int(__import__('os').getenv('PORT', '8080'))
+    site = web.TCPSite(runner, '0.0.0.0', port)
+    await site.start()
+    logging.info("❤️ User bot health server listening on :%s", port)
     return runner
 
 
 async def main():
     if not BOT_TOKEN:
         raise RuntimeError("BOT_TOKEN не задан. Добавьте токен пользовательского бота в Railway Variables.")
-    await _init_db_with_retry()
-    bot = Bot(BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
+    # Start liveness endpoint first so Railway can mark the container alive
+    # even while Alembic is applying migrations.
     health_runner = await _health_server()
+    try:
+        await _init_db_with_retry()
+    except Exception:
+        await health_runner.cleanup()
+        raise
+    bot = Bot(BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
     dp = Dispatcher()
     dp.include_router(router)
     logging.info("👤 Пользовательский бот запущен")
