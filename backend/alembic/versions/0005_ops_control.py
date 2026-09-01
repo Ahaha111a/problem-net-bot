@@ -78,14 +78,44 @@ def upgrade():
     op.create_index("ix_prompt_active", "prompt_versions", ["name", "active"])
     op.create_index("ix_incident_status_created", "incidents", ["status", "created_at"])
     op.create_index("ix_shadow_created", "ai_shadow_runs", ["created_at"])
-    op.execute(sa.text("""
-        INSERT INTO policy_rules(key,title,config_json,enabled) VALUES
-        ('ai_shadow_mode','AI Shadow Mode','{"enabled":false,"model":""}',false),
-        ('auto_rollback','Automatic rollback','{"enabled":false,"severity":"critical"}',false),
-        ('safety_policy','Safety policy','{"manual_review_risk":0.75,"reject_risk":0.95,"require_second_opinion":true}',true),
-        ('sla_policy','SLA policy','{"critical_minutes":15,"high_minutes":30,"normal_minutes":120,"low_minutes":480}',true)
+    # IMPORTANT: do not embed JSON literals containing ":" inside sa.text().
+    # SQLAlchemy treats colon-prefixed fragments as bind parameters, so JSON such
+    # as {"critical_minutes":15} can be compiled into %(15)s and break the
+    # migration. Pass the JSON as a bound value instead.
+    conn = op.get_bind()
+    seed_stmt = sa.text("""
+        INSERT INTO policy_rules(key, title, config_json, enabled)
+        VALUES (:key, :title, :config_json, :enabled)
         ON CONFLICT(key) DO NOTHING
-    """))
+    """)
+    seed_rows = [
+        {
+            "key": "ai_shadow_mode",
+            "title": "AI Shadow Mode",
+            "config_json": '{"enabled": false, "model": ""}',
+            "enabled": False,
+        },
+        {
+            "key": "auto_rollback",
+            "title": "Automatic rollback",
+            "config_json": '{"enabled": false, "severity": "critical"}',
+            "enabled": False,
+        },
+        {
+            "key": "safety_policy",
+            "title": "Safety policy",
+            "config_json": '{"manual_review_risk": 0.75, "reject_risk": 0.95, "require_second_opinion": true}',
+            "enabled": True,
+        },
+        {
+            "key": "sla_policy",
+            "title": "SLA policy",
+            "config_json": '{"critical_minutes": 15, "high_minutes": 30, "normal_minutes": 120, "low_minutes": 480}',
+            "enabled": True,
+        },
+    ]
+    for row in seed_rows:
+        conn.execute(seed_stmt, row)
 
 
 def downgrade():
