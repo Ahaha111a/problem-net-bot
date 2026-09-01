@@ -125,15 +125,27 @@ async def index(request):
     return web.FileResponse(WEB_DIR / 'index.html')
 
 async def health(request):
-    # Railway uses this endpoint as a process liveness check. Do not make it
-    # depend on PostgreSQL: Alembic runs during startup and a DB hiccup should
-    # not turn a healthy HTTP process into a failed Railway deployment.
+    # Railway healthcheck is a liveness probe. It must stay available while
+    # PostgreSQL/Alembic is starting or temporarily reconnecting. A separate
+    # readiness result is included in the JSON instead of turning the whole
+    # deployment into a healthcheck failure.
+    db_ok = False
+    db_error = None
+    try:
+        con = get_connection()
+        con.execute('SELECT 1').fetchone()
+        con.close()
+        db_ok = True
+    except Exception as exc:
+        db_error = str(exc)
     return web.json_response({
         'ok': True,
+        'ready': db_ok,
         'service': 'problem-net-admin',
-        'status': 'alive',
+        'database': 'ok' if db_ok else 'starting',
+        'database_error': db_error,
         'timezone': 'Europe/Moscow',
-    })
+    }, status=200)
 
 async def static_file(request):
     name = request.match_info['name']
@@ -849,10 +861,29 @@ def create_app(bot):
     return app
 
 
+def _railway_port(default=8080):
+    raw = os.getenv('PORT', '').strip()
+    try:
+        port = int(raw) if raw else default
+    except (TypeError, ValueError):
+        port = default
+    if not 1 <= port <= 65535:
+        port = default
+    return port
+
+
 async def start_admin_web(bot):
-    app=create_app(bot)
-    runner=web.AppRunner(app); await runner.setup()
-    port=int(os.getenv('PORT','8080'))
-    site=web.TCPSite(runner,'0.0.0.0',port); await site.start()
-    print(f'🖥 Admin Mini App server listening on :{port}')
+    app = create_app(bot)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    port = _railway_port()
+    # Railway routes healthchecks to the PORT environment variable. Bind to
+    # all interfaces rather than localhost.
+    site = web.TCPSite(runner, '0.0.0.0', port, reuse_address=True)
+    try:
+        await site.start()
+    except Exception:
+        await runner.cleanup()
+        raise
+    print(f'🖥 Admin Mini App server listening on 0.0.0.0:{port}')
     return runner

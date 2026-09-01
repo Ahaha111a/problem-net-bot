@@ -163,25 +163,35 @@ async def _init_db_with_retry():
 async def main():
     if not MODERATOR_BOT_TOKEN:
         raise RuntimeError('MODERATOR_BOT_TOKEN не задан. Создай второго Telegram-бота и добавь его токен в Railway.')
-    # Start the HTTP liveness server before database migrations so Railway's
-    # /health check can succeed during Alembic startup.
-    bot=Bot(MODERATOR_BOT_TOKEN,default=DefaultBotProperties(parse_mode=ParseMode.HTML))
-    web_runner=await start_admin_web(bot)
+    bot = Bot(MODERATOR_BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
+    dp = Dispatcher()
+    dp.include_router(moderator_entry_router)
+    dp.include_router(callback_router)
+    dp.include_router(router)
+
+    # Start the HTTP health endpoint before database migrations. This prevents
+    # Railway from seeing a dead deployment while PostgreSQL/Alembic is booting.
+    web_runner = await start_admin_web(bot)
+    tasks = []
     try:
         await _init_db_with_retry()
-    except Exception:
+        print(f'🗄️ DB backend: {"PostgreSQL" if DATABASE_URL else "SQLite"}')
+        print(f'🔴 Redis: {"подключён" if REDIS_URL else "не задан"}')
+        tasks = [
+            asyncio.create_task(scheduler(bot)),
+            asyncio.create_task(repost_worker(bot)),
+            asyncio.create_task(reports_and_monitoring(bot)),
+            asyncio.create_task(event_notifications(bot)),
+        ]
+        print('🛡 Бот сотрудников запущен. DB=PostgreSQL; backups=automatic')
+        await dp.start_polling(bot)
+    finally:
+        for task in tasks:
+            task.cancel()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
         await web_runner.cleanup()
         await bot.session.close()
-        raise
-    print(f'🗄️ DB backend: {"PostgreSQL" if DATABASE_URL else "SQLite"}')
-    print(f'🔴 Redis: {"подключён" if REDIS_URL else "не задан"}')
-    dp=Dispatcher(); dp.include_router(moderator_entry_router); dp.include_router(callback_router); dp.include_router(router)
-    tasks=[asyncio.create_task(scheduler(bot)),asyncio.create_task(repost_worker(bot)),asyncio.create_task(reports_and_monitoring(bot)),asyncio.create_task(event_notifications(bot))]
-    print(f'🛡 Бот сотрудников запущен. DB=PostgreSQL; backups=automatic')
-    try: await dp.start_polling(bot)
-    finally:
-        for t in tasks: t.cancel()
-        await web_runner.cleanup(); await bot.session.close()
 
 
 if __name__=='__main__':
