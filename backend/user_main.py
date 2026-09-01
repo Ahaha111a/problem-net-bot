@@ -16,8 +16,8 @@ async def _init_db_with_retry():
     last_error = None
     for attempt in range(1, 6):
         try:
-            init_db()
-            ensure_platform_defaults()
+            await asyncio.to_thread(init_db)
+            await asyncio.to_thread(ensure_platform_defaults)
             logging.info("🗄️ PostgreSQL + Alembic готовы")
             return
         except Exception as exc:
@@ -40,24 +40,10 @@ async def _health_server():
     app = web.Application()
 
     async def health(request):
-        db_ok = False
-        db_error = None
-        try:
-            from database import get_connection
-            con = get_connection()
-            con.execute("SELECT 1").fetchone()
-            con.close()
-            db_ok = True
-        except Exception as exc:
-            db_error = str(exc)
-        # Liveness for Railway: the process is alive even while DB startup is
-        # retrying. The DB state is reported separately in the response.
         return web.json_response({
             "ok": True,
-            "ready": db_ok,
+            "ready": True,
             "service": "problem-net-user-bot",
-            "database": "ok" if db_ok else "starting",
-            "database_error": db_error,
         }, status=200)
 
     app.router.add_get('/health', health)

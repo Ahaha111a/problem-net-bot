@@ -198,30 +198,47 @@ def get_connection():
 # =========================================================
 
 def init_db():
-    """Применяет все Alembic-миграции к PostgreSQL.
+    """Apply PostgreSQL Alembic migrations safely in production.
 
-    Схема больше не создаётся вручную из database.py. Единственный источник
-    изменений схемы — папка alembic/versions. Это предотвращает сброс/
-    расхождение структуры БД при каждом деплое.
+    Both Telegram services can start at the same time, so migration work is
+    serialized with a PostgreSQL advisory lock. The Alembic version column is
+    widened before Alembic writes any revision, including on a brand-new DB.
+    This removes the old VARCHAR(32) trap permanently.
     """
     from pathlib import Path
     from alembic import command
     from alembic.config import Config
+    import psycopg
 
     root = Path(__file__).resolve().parent
     cfg = Config(str(root / "alembic.ini"))
     cfg.set_main_option("script_location", str(root / "alembic"))
-    if not (root / "alembic" / "versions").is_dir():
-        raise RuntimeError(f"Alembic migrations not found: {root / 'alembic' / 'versions'}")
+    versions_dir = root / "alembic" / "versions"
+    if not versions_dir.is_dir():
+        raise RuntimeError(f"Alembic migrations not found: {versions_dir}")
     cfg.set_main_option("sqlalchemy.url", DATABASE_URL.replace("%", "%%"))
 
-    # Both Telegram services may boot at the same time. Serialize Alembic so
-    # two deployments cannot migrate the same PostgreSQL schema concurrently.
-    import psycopg
     lock_key = 726391
     with psycopg.connect(DATABASE_URL) as lock_con:
         lock_con.execute("SELECT pg_advisory_lock(%s)", (lock_key,))
         try:
+            # Alembic's default version_num is VARCHAR(32). The project uses
+            # descriptive revision names, some longer than 32 characters.
+            # Create the table ourselves on a fresh database, or widen it on
+            # an existing database, before Alembic performs any upgrade.
+            exists = lock_con.execute(
+                "SELECT to_regclass('public.alembic_version')"
+            ).fetchone()[0]
+            if exists is None:
+                lock_con.execute(
+                    "CREATE TABLE alembic_version (version_num VARCHAR(255) NOT NULL PRIMARY KEY)"
+                )
+            else:
+                lock_con.execute(
+                    "ALTER TABLE alembic_version ALTER COLUMN version_num TYPE VARCHAR(255)"
+                )
+            lock_con.commit()
+
             command.upgrade(cfg, "head")
         finally:
             lock_con.execute("SELECT pg_advisory_unlock(%s)", (lock_key,))
@@ -232,7 +249,6 @@ def init_db():
         ensure_ops_defaults()
     except Exception as exc:
         print(f"⚠️ Ops defaults skipped: {exc}")
-
 
 # =========================================================
 # USERS

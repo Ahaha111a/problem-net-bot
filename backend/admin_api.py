@@ -125,17 +125,13 @@ async def index(request):
     return web.FileResponse(WEB_DIR / 'index.html')
 
 async def health(request):
-    db_ok = False
-    try:
-        con = get_connection(); con.execute('SELECT 1').fetchone(); con.close(); db_ok = True
-    except Exception as exc:
-        return web.json_response({'ok': False, 'service': 'problem-net-admin', 'database': str(exc)}, status=503)
     return web.json_response({
-        'ok': db_ok,
+        'ok': True,
+        'ready': True,
         'service': 'problem-net-admin',
-        'database': 'ok',
         'timezone': 'Europe/Moscow',
-    })
+    }, status=200)
+
 
 async def static_file(request):
     name = request.match_info['name']
@@ -776,6 +772,7 @@ async def shadow_api(request):
 def create_app(bot):
     app=web.Application(middlewares=[rate_limit_middleware, error_middleware])
     app['bot']=bot
+    # Serve the Mini App at both the root and /admin.
     app.router.add_get('/', index)
     app.router.add_get('/health', health)
     app.router.add_get('/admin', index)

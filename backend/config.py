@@ -32,7 +32,10 @@ AI_QUEUE_ENABLED = os.getenv("AI_QUEUE_ENABLED", "1").strip() == "1"
 AI_EMERGENCY_DIRECT = os.getenv("AI_EMERGENCY_DIRECT", "1").strip() == "1"
 BACKUP_DIR = os.getenv("BACKUP_DIR", "/app/backups").strip() or "/app/backups"
 
+_railway_public_domain = os.getenv("RAILWAY_PUBLIC_DOMAIN", "").strip().rstrip("/")
 ADMIN_MINIAPP_URL = os.getenv("ADMIN_MINIAPP_URL", "").strip()
+if not ADMIN_MINIAPP_URL and _railway_public_domain:
+    ADMIN_MINIAPP_URL = f"https://{_railway_public_domain}/admin"
 _mini_base = ADMIN_MINIAPP_URL.rstrip("/")
 if _mini_base.endswith("/admin"):
     _mini_base = _mini_base[:-6]

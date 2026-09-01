@@ -1,12 +1,10 @@
 from aiogram import Router, F
-from aiogram.types import CallbackQuery, Message
-from aiogram.fsm.context import FSMContext
+from aiogram.types import CallbackQuery
 
 from config import ADMIN_IDS, CHANNEL_ID
 from database import (
     get_story, get_latest_safety_decision, publish_story, reject_story, get_story_reaction_counts,
-    set_story_reaction, get_user_story_reaction, create_support_dialog,
-    get_open_dialog_by_user, add_support_message, lock_story, get_story_lock,
+    set_story_reaction, get_user_story_reaction, lock_story, get_story_lock,
     is_admin_active,
     unlock_story, update_story_content, log_admin_action, get_admin_role, record_kpi_event,
 )
@@ -96,9 +94,3 @@ async def reaction_callback(query: CallbackQuery):
     await query.message.edit_reply_markup(reply_markup=channel_story_keyboard(story_id, None, counts))
     await query.answer("Готово")
 
-
-@callback_router.callback_query(F.data == "support:start")
-async def support_start(query: CallbackQuery, state: FSMContext):
-    await state.set_state("support_waiting")
-    await query.message.answer("🆘 Напишите сообщение сотруднику поддержки. Мы передадим его модератору.")
-    await query.answer()

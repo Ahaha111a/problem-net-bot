@@ -18,7 +18,6 @@ from database import (
     report_was_sent, mark_report_sent, get_extended_stats, get_moderator_performance, get_latest_safety_decision,
 )
 from moderator_entry import router as moderator_entry_router
-from handlers import router
 from callbacks import callback_router, get_channel_message_link
 from admin_api import start_admin_web
 from keyboards import channel_story_keyboard, published_story_keyboard
@@ -150,8 +149,8 @@ async def _init_db_with_retry():
     last_error = None
     for attempt in range(1, 6):
         try:
-            init_db()
-            ensure_platform_defaults()
+            await asyncio.to_thread(init_db)
+            await asyncio.to_thread(ensure_platform_defaults)
             return
         except Exception as exc:
             last_error = exc
@@ -167,7 +166,6 @@ async def main():
     dp = Dispatcher()
     dp.include_router(moderator_entry_router)
     dp.include_router(callback_router)
-    dp.include_router(router)
 
     # Start the HTTP health endpoint before database migrations. This prevents
     # Railway from seeing a dead deployment while PostgreSQL/Alembic is booting.
