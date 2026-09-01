@@ -163,6 +163,9 @@ async def main():
     if not MODERATOR_BOT_TOKEN:
         raise RuntimeError('MODERATOR_BOT_TOKEN не задан. Создай второго Telegram-бота и добавь его токен в Railway.')
     bot = Bot(MODERATOR_BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
+    me = await bot.get_me()
+    logging.info("🛡 Moderator Bot authenticated as @%s (%s)", me.username, me.id)
+    await bot.delete_webhook(drop_pending_updates=False)
     dp = Dispatcher()
     dp.include_router(moderator_entry_router)
     dp.include_router(callback_router)
@@ -182,7 +185,15 @@ async def main():
             asyncio.create_task(event_notifications(bot)),
         ]
         print('🛡 Бот сотрудников запущен. DB=PostgreSQL; backups=automatic')
-        await dp.start_polling(bot)
+        while True:
+            try:
+                await dp.start_polling(bot)
+                break
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logging.exception('Moderator Telegram polling crashed; retrying in 5 seconds')
+                await asyncio.sleep(5)
     finally:
         for task in tasks:
             task.cancel()

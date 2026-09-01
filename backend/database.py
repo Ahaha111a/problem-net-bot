@@ -332,23 +332,28 @@ def get_support_stats():
 
 
 def get_extended_stats():
+    """PostgreSQL-native dashboard metrics."""
     connection = get_connection()
-    published_today = connection.execute(
-        """SELECT COUNT(*) AS count FROM stories
-           WHERE status = 'published'
-             AND date(created_at) = date('now')"""
-    ).fetchone()["count"]
-    rejected_today = connection.execute(
-        """SELECT COUNT(*) AS count FROM stories
-           WHERE status = 'rejected'
-             AND date(created_at) = date('now')"""
-    ).fetchone()["count"]
-    avg_dialog_messages = connection.execute(
-        """SELECT COALESCE(AVG(cnt), 0) AS value FROM (
-               SELECT COUNT(*) AS cnt FROM support_messages GROUP BY dialog_id
-           )"""
-    ).fetchone()["value"]
-    connection.close()
+    try:
+        published_today = connection.execute(
+            """SELECT COUNT(*) AS count FROM stories
+               WHERE status='published'
+                 AND created_at >= ((CURRENT_TIMESTAMP AT TIME ZONE 'Europe/Moscow')::date AT TIME ZONE 'Europe/Moscow')
+                 AND created_at < (((CURRENT_TIMESTAMP AT TIME ZONE 'Europe/Moscow')::date + INTERVAL '1 day') AT TIME ZONE 'Europe/Moscow')"""
+        ).fetchone()["count"]
+        rejected_today = connection.execute(
+            """SELECT COUNT(*) AS count FROM stories
+               WHERE status='rejected'
+                 AND created_at >= ((CURRENT_TIMESTAMP AT TIME ZONE 'Europe/Moscow')::date AT TIME ZONE 'Europe/Moscow')
+                 AND created_at < (((CURRENT_TIMESTAMP AT TIME ZONE 'Europe/Moscow')::date + INTERVAL '1 day') AT TIME ZONE 'Europe/Moscow')"""
+        ).fetchone()["count"]
+        avg_dialog_messages = connection.execute(
+            """SELECT COALESCE(AVG(cnt), 0) AS value FROM (
+                   SELECT COUNT(*) AS cnt FROM support_messages GROUP BY dialog_id
+               ) q"""
+        ).fetchone()["value"]
+    finally:
+        connection.close()
     stats = get_stats()
     stats["users"] = get_user_count()
     stats["support"] = get_support_stats()
@@ -831,9 +836,9 @@ def get_analytics():
            FROM stories GROUP BY category ORDER BY count DESC LIMIT 10"""
     ).fetchall()
     daily = connection.execute(
-        """SELECT date(created_at) AS day, COUNT(*) AS count
-           FROM stories WHERE created_at >= date('now', '-6 days')
-           GROUP BY date(created_at) ORDER BY day ASC"""
+        """SELECT (created_at AT TIME ZONE 'Europe/Moscow')::date AS day, COUNT(*) AS count
+           FROM stories WHERE created_at >= CURRENT_TIMESTAMP - INTERVAL '6 days'
+           GROUP BY 1 ORDER BY day ASC"""
     ).fetchall()
     connection.close()
     return {
@@ -1457,7 +1462,7 @@ def get_support_priority(dialog_id:int):
 def get_sla_breaches():
     con=get_connection(); rows=con.execute("""SELECT d.*, COALESCE(s.priority,'normal') priority, s.first_response_due_at
       FROM support_dialogs d LEFT JOIN support_sla s ON s.dialog_id=d.id
-      WHERE d.status='open' AND s.first_response_due_at IS NOT NULL AND datetime(s.first_response_due_at)<datetime('now')
+      WHERE d.status='open' AND s.first_response_due_at IS NOT NULL AND s.first_response_due_at < CURRENT_TIMESTAMP
       AND d.support_status='new' ORDER BY s.first_response_due_at ASC""").fetchall(); con.close(); return rows
 
 
@@ -1488,7 +1493,14 @@ def get_top_stories(limit:int=10):
 
 
 def get_user_retention():
-    con=get_connection(); rows=con.execute("""SELECT COUNT(*) total, SUM(CASE WHEN date(created_at)>=date('now','-1 day') THEN 1 ELSE 0 END) d1, SUM(CASE WHEN date(created_at)>=date('now','-7 day') THEN 1 ELSE 0 END) d7, SUM(CASE WHEN date(created_at)>=date('now','-30 day') THEN 1 ELSE 0 END) d30 FROM users""").fetchone(); con.close(); return rows
+    con=get_connection()
+    row=con.execute("""SELECT COUNT(*) total,
+        SUM(CASE WHEN created_at >= CURRENT_TIMESTAMP - INTERVAL '1 day' THEN 1 ELSE 0 END) d1,
+        SUM(CASE WHEN created_at >= CURRENT_TIMESTAMP - INTERVAL '7 days' THEN 1 ELSE 0 END) d7,
+        SUM(CASE WHEN created_at >= CURRENT_TIMESTAMP - INTERVAL '30 days' THEN 1 ELSE 0 END) d30
+        FROM users""").fetchone()
+    con.close()
+    return row
 
 
 def update_story_content(story_id: int, text: str, post_text: str, admin_id: int):
@@ -1518,9 +1530,9 @@ def get_support_metrics():
           COUNT(*) AS total,
           SUM(CASE WHEN status='open' THEN 1 ELSE 0 END) AS open_count,
           AVG(CASE WHEN first_response_at IS NOT NULL
-              THEN (julianday(first_response_at)-julianday(created_at))*86400 END) AS avg_first_response_seconds,
+              THEN EXTRACT(EPOCH FROM (first_response_at-created_at)) END) AS avg_first_response_seconds,
           AVG(CASE WHEN resolved_at IS NOT NULL
-              THEN (julianday(resolved_at)-julianday(created_at))*86400 END) AS avg_resolution_seconds
+              THEN EXTRACT(EPOCH FROM (resolved_at-created_at)) END) AS avg_resolution_seconds
         FROM support_dialogs
     """).fetchone()
     con.close(); return row
@@ -1548,7 +1560,7 @@ def get_category_stats():
 
 def get_publication_hour_stats():
     con=get_connection(); rows=con.execute("""
-      SELECT CAST(strftime('%H', created_at) AS INTEGER) hour, COUNT(*) count
+      SELECT EXTRACT(HOUR FROM created_at)::int hour, COUNT(*) count
       FROM stories WHERE status='published' AND channel_message_id IS NOT NULL
       GROUP BY hour ORDER BY hour
     """).fetchall(); con.close(); return rows

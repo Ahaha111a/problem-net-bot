@@ -24,7 +24,7 @@ def admin_keyboard() -> ReplyKeyboardMarkup:
         rows.append([KeyboardButton(text="👑 Кабинет основателя", web_app=WebAppInfo(url=FOUNDER_URL))])
     rows.extend([
         [KeyboardButton(text="⏳ Модерация"), KeyboardButton(text="📊 Статистика")],
-        [KeyboardButton(text="📁 Все истории"), KeyboardButton(text="⬅️ Назад")],
+        [KeyboardButton(text="📁 Все истории")],
     ])
     return ReplyKeyboardMarkup(keyboard=rows, resize_keyboard=True, is_persistent=True)
 

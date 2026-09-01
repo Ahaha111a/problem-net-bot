@@ -21,8 +21,7 @@ ADMIN_IDS = [
     for user_id in os.getenv("ADMIN_IDS", "").split(",")
     if user_id.strip()
 ]
-if not ADMIN_IDS:
-    raise RuntimeError("Не задан ADMIN_IDS. Укажите Telegram ID через запятую.")
+# ADMIN_IDS is required only for moderator authorization; the user bot can run without it.
 
 CHANNEL_ID = _required("CHANNEL_ID")
 

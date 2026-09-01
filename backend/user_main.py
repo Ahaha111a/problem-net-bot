@@ -67,10 +67,21 @@ async def main():
     health_runner = await _health_server()
     try:
         await _init_db_with_retry()
+        me = await bot.get_me()
+        logging.info("👤 User Bot authenticated as @%s (%s)", me.username, me.id)
+        await bot.delete_webhook(drop_pending_updates=False)
         dp = Dispatcher()
         dp.include_router(router)
         logging.info("👤 Пользовательский бот запущен")
-        await dp.start_polling(bot)
+        while True:
+            try:
+                await dp.start_polling(bot)
+                break
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logging.exception("Telegram polling crashed; retrying in 5 seconds")
+                await asyncio.sleep(5)
     finally:
         await health_runner.cleanup()
         await bot.session.close()

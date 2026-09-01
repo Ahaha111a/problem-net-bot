@@ -11,9 +11,19 @@ from database import (
 )
 from ai import analyze_story, run_safety_pipeline
 from post_generator import create_post
-from keyboards import main_keyboard, admin_keyboard, moderation_keyboard, support_keyboard
+from keyboards import main_keyboard
 
 router = Router()
+
+
+@router.message(F.text == "/start")
+async def start_handler(message: Message):
+    register_user(message.from_user.id)
+    await message.answer(
+        "💙 <b>Расскажите свою историю.</b>\n\n"
+        "Можно написать всё, что вас беспокоит.",
+        reply_markup=main_keyboard(),
+    )
 
 class StoryState(StatesGroup):
     waiting_for_story = State()
@@ -118,42 +128,3 @@ async def support_message(message: Message, state: FSMContext):
     await state.clear()
     await message.answer("💙 Сообщение передано сотруднику. Мы постараемся ответить как можно быстрее.", reply_markup=main_keyboard())
 
-
-@router.message(F.text == "👨‍💼 Админ-панель")
-async def admin_panel(message: Message):
-    if not is_admin(message.from_user.id):
-        return
-    await message.answer("🛡 <b>Панель сотрудников</b>", reply_markup=admin_keyboard())
-
-
-@router.message(F.text == "📊 Статистика")
-async def stats(message: Message):
-    if not is_admin(message.from_user.id): return
-    s = get_stats()
-    await message.answer(f"📊 <b>Статистика</b>\n\nВсего историй: {s['total']}\nНа модерации: {s['waiting']}\nОпубликовано: {s['published']}\nОтклонено: {s['rejected']}")
-
-
-@router.message(F.text == "⏳ Модерация")
-async def moderation(message: Message):
-    if not is_admin(message.from_user.id): return
-    stories = get_waiting_stories()
-    if not stories:
-        await message.answer("🟢 Историй на модерации нет.")
-        return
-    for story in stories[:20]:
-        await message.answer(f"📥 <b>История #{story['id']}</b>\n\n{story['text']}", reply_markup=moderation_keyboard(story['id']))
-
-
-@router.message(F.text == "📁 Все истории")
-async def all_stories(message: Message):
-    if not is_admin(message.from_user.id): return
-    rows = get_all_stories()[:20]
-    if not rows:
-        await message.answer("📁 Историй пока нет."); return
-    await message.answer("📁 <b>Последние истории</b>\n\n" + "\n".join(f"#{r['id']} — {r['status']}" for r in rows))
-
-
-@router.message(F.text == "⬅️ Назад")
-async def back(message: Message, state: FSMContext):
-    await state.clear()
-    await message.answer("↩️ Главное меню", reply_markup=main_keyboard())

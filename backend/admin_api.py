@@ -180,16 +180,35 @@ async def api_health(request):
 
 async def dashboard(request):
     uid = auth(request)
+    # Keep the first dashboard response resilient: optional analytics must not
+    # take down the entire Mini App if one legacy metric query is unavailable.
+    stats = get_stats()
+    try:
+        stats['users'] = get_user_count()
+    except Exception:
+        stats['users'] = 0
+    try:
+        stats['support'] = get_support_stats()
+    except Exception:
+        stats['support'] = {'open': 0, 'new': 0, 'in_progress': 0}
+
+    def safe(call, default):
+        try:
+            return call()
+        except Exception as exc:
+            print(f'⚠️ dashboard optional metric failed: {type(exc).__name__}: {exc}')
+            return default
+
     return web.json_response({
         'me': {'id': uid, 'role': get_admin_role(uid)},
         'timezone': 'Europe/Moscow',
-        'stats': get_extended_stats(),
-        'analytics': get_analytics(),
-        'complaints': _rows(get_complaints('new', 20)),
-        'sla_breaches': _rows(get_sla_breaches()),
-        'notifications': _rows(get_admin_notifications(uid, False, 20)),
-        'top_stories': _rows(get_top_stories(10)),
-        'retention': _json(get_user_retention()),
+        'stats': stats,
+        'analytics': safe(get_analytics, {}),
+        'complaints': _rows(safe(lambda: get_complaints('new', 20), [])),
+        'sla_breaches': _rows(safe(get_sla_breaches, [])),
+        'notifications': _rows(safe(lambda: get_admin_notifications(uid, False, 20), [])),
+        'top_stories': _rows(safe(lambda: get_top_stories(10), [])),
+        'retention': _json(safe(get_user_retention, {})),
     })
 
 async def stories(request):
@@ -527,7 +546,9 @@ async def leaderboard_api(request):
 
 
 async def founder_page(request):
-    auth(request, {'owner'})
+    # The HTML shell is intentionally public. Telegram initData is available to
+    # JavaScript inside Telegram, not as a header on the initial document GET.
+    # Authorization is enforced by /founder/api after the shell loads.
     return web.FileResponse(WEB_DIR / 'founder.html')
 
 
