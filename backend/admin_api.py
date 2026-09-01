@@ -125,27 +125,17 @@ async def index(request):
     return web.FileResponse(WEB_DIR / 'index.html')
 
 async def health(request):
-    # Railway healthcheck is a liveness probe. It must stay available while
-    # PostgreSQL/Alembic is starting or temporarily reconnecting. A separate
-    # readiness result is included in the JSON instead of turning the whole
-    # deployment into a healthcheck failure.
     db_ok = False
-    db_error = None
     try:
-        con = get_connection()
-        con.execute('SELECT 1').fetchone()
-        con.close()
-        db_ok = True
+        con = get_connection(); con.execute('SELECT 1').fetchone(); con.close(); db_ok = True
     except Exception as exc:
-        db_error = str(exc)
+        return web.json_response({'ok': False, 'service': 'problem-net-admin', 'database': str(exc)}, status=503)
     return web.json_response({
-        'ok': True,
-        'ready': db_ok,
+        'ok': db_ok,
         'service': 'problem-net-admin',
-        'database': 'ok' if db_ok else 'starting',
-        'database_error': db_error,
+        'database': 'ok',
         'timezone': 'Europe/Moscow',
-    }, status=200)
+    })
 
 async def static_file(request):
     name = request.match_info['name']
@@ -700,6 +690,17 @@ async def sla_dashboard_api(request):
     return web.json_response(sla_dashboard())
 
 
+async def kpi_dashboard_api(request):
+    """Return the real moderator KPI dashboard data used by the Mini App."""
+    auth(request, {'owner', 'moderator', 'analyst'})
+    try:
+        days = int(request.query.get('days', '30'))
+    except (TypeError, ValueError):
+        raise web.HTTPBadRequest(text='days must be an integer')
+    days = max(1, min(days, 365))
+    return web.json_response(get_kpi_dashboard(days))
+
+
 async def prompts_api(request):
     uid = auth(request, {'owner'})
     if request.method == 'GET':
@@ -861,29 +862,10 @@ def create_app(bot):
     return app
 
 
-def _railway_port(default=8080):
-    raw = os.getenv('PORT', '').strip()
-    try:
-        port = int(raw) if raw else default
-    except (TypeError, ValueError):
-        port = default
-    if not 1 <= port <= 65535:
-        port = default
-    return port
-
-
 async def start_admin_web(bot):
-    app = create_app(bot)
-    runner = web.AppRunner(app)
-    await runner.setup()
-    port = _railway_port()
-    # Railway routes healthchecks to the PORT environment variable. Bind to
-    # all interfaces rather than localhost.
-    site = web.TCPSite(runner, '0.0.0.0', port, reuse_address=True)
-    try:
-        await site.start()
-    except Exception:
-        await runner.cleanup()
-        raise
-    print(f'🖥 Admin Mini App server listening on 0.0.0.0:{port}')
+    app=create_app(bot)
+    runner=web.AppRunner(app); await runner.setup()
+    port=int(os.getenv('PORT','8080'))
+    site=web.TCPSite(runner,'0.0.0.0',port); await site.start()
+    print(f'🖥 Admin Mini App server listening on :{port}')
     return runner
