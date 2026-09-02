@@ -34,6 +34,7 @@ from database import (
 from ai import analyze_story, moderate_story
 from post_generator import create_post
 from keyboards import channel_story_keyboard, published_story_keyboard
+from notifications import notify_user
 from rate_limit import allowed as rate_limit_allowed
 from ops import (
     workload, sla_dashboard, prompts, save_prompt, activate_prompt, policies, set_policy,
@@ -90,16 +91,35 @@ def validate_init_data(init_data: str) -> dict | None:
 
 
 def auth(request, allowed=None):
-    init_data = request.headers.get('X-Telegram-Init-Data', '')
+    """Authenticate a Mini App request without turning DB hiccups into HTTP 500.
+
+    Telegram initData is the source of identity. DB-backed role/status checks are
+    deliberately best-effort here because the web server can start before Alembic
+    finishes or Supabase can have a short network hiccup.
+    """
+    init_data = request.headers.get('X-Telegram-Init-Data', '').strip()
+    if not init_data:
+        raise web.HTTPUnauthorized(text='Откройте панель из Telegram Mini App: initData отсутствует')
     data = validate_init_data(init_data)
     if not data:
-        raise web.HTTPUnauthorized(text='Invalid Telegram initData')
+        raise web.HTTPUnauthorized(text='Недействительные данные Telegram initData')
     user = data.get('user') or {}
-    uid = int(user.get('id', 0))
-    if uid not in ADMIN_IDS:
-        raise web.HTTPForbidden(text='Admin access required')
-    role = get_admin_role(uid)
-    # Fired employees lose access immediately, even if their old role remains in admin_roles.
+    try:
+        uid = int(user.get('id', 0))
+    except (TypeError, ValueError):
+        uid = 0
+    if uid not in {int(x) for x in ADMIN_IDS}:
+        raise web.HTTPForbidden(text='Доступ только для сотрудников проекта')
+
+    # The first configured admin is the bootstrap owner even if the roles table
+    # is temporarily unavailable.
+    role = 'owner' if ADMIN_IDS and uid == int(ADMIN_IDS[0]) else 'moderator'
+    try:
+        role = get_admin_role(uid) or role
+    except Exception as exc:
+        print(f'⚠️ auth role lookup failed: {type(exc).__name__}: {exc}')
+
+    # Fired employees lose access immediately when the employee table is available.
     con = None
     try:
         con = get_connection()
@@ -108,16 +128,14 @@ def auth(request, allowed=None):
             raise web.HTTPForbidden(text='Доступ сотрудника отключён')
     except web.HTTPException:
         raise
-    except Exception:
-        pass
+    except Exception as exc:
+        print(f'⚠️ auth employee status lookup failed: {type(exc).__name__}: {exc}')
     finally:
         if con is not None:
-            try:
-                con.close()
-            except Exception:
-                pass
+            try: con.close()
+            except Exception: pass
     if allowed and role not in allowed:
-        raise web.HTTPForbidden(text='Insufficient role')
+        raise web.HTTPForbidden(text='Недостаточно прав для этого раздела')
     return uid
 
 
@@ -180,27 +198,21 @@ async def api_health(request):
 
 async def dashboard(request):
     uid = auth(request)
-    # Keep the first dashboard response resilient: optional analytics must not
-    # take down the entire Mini App if one legacy metric query is unavailable.
-    stats = get_stats()
-    try:
-        stats['users'] = get_user_count()
-    except Exception:
-        stats['users'] = 0
-    try:
-        stats['support'] = get_support_stats()
-    except Exception:
-        stats['support'] = {'open': 0, 'new': 0, 'in_progress': 0}
 
     def safe(call, default):
         try:
             return call()
         except Exception as exc:
-            print(f'⚠️ dashboard optional metric failed: {type(exc).__name__}: {exc}')
+            print(f'⚠️ dashboard metric failed: {type(exc).__name__}: {exc}')
             return default
 
+    stats = safe(get_stats, {'total': 0, 'waiting': 0, 'published': 0, 'rejected': 0})
+    stats['users'] = safe(get_user_count, 0)
+    stats['support'] = safe(get_support_stats, {'open': 0, 'new': 0, 'in_progress': 0})
+    role = safe(lambda: get_admin_role(uid), 'owner' if ADMIN_IDS and uid == int(ADMIN_IDS[0]) else 'moderator')
     return web.json_response({
-        'me': {'id': uid, 'role': get_admin_role(uid)},
+        'ok': True,
+        'me': {'id': uid, 'role': role},
         'timezone': 'Europe/Moscow',
         'stats': stats,
         'analytics': safe(get_analytics, {}),
@@ -280,7 +292,7 @@ async def story_publish(request):
         await sent.edit_reply_markup(reply_markup=channel_story_keyboard(sid,link,{}))
     record_kpi_event(uid,'publish')
     try:
-        await bot.send_message(row['user_id'],'🎉 <b>Ваша история была опубликована!</b>\n\nСпасибо, что поделились ей с нами 💙',reply_markup=published_story_keyboard(link,sid))
+        await notify_user(row['user_id'],'🎉 <b>Ваша история была опубликована!</b>\n\nСпасибо, что поделились ей с нами 💙',reply_markup=published_story_keyboard(link,sid))
     except Exception as exc:
         log_admin_action(uid,'publish_user_notify_error',story_id=sid,user_id=row['user_id'],details=str(exc))
     log_admin_action(uid,'miniapp_publish',story_id=sid,user_id=row['user_id'])
@@ -394,7 +406,7 @@ async def dialog_message(request):
     if d['status']!='open': raise web.HTTPBadRequest(text='Dialog closed')
     add_support_message(did,uid,'admin',text[:4000]); record_kpi_event(uid,'support_response')
     try:
-        await request.app['bot'].send_message(d['user_id'], '💬 <b>Сообщение поддержки:</b>\n\n'+text[:4000], parse_mode='HTML')
+        await notify_user(d['user_id'], '💬 <b>Сообщение поддержки:</b>\n\n'+text[:4000])
     except Exception as e:
         print('MINIAPP SUPPORT SEND ERROR:',e)
     log_admin_action(uid,'miniapp_support_message',dialog_id=did,user_id=d['user_id'])
@@ -404,7 +416,7 @@ async def story_contact(request):
     uid=auth(request); sid=int(request.match_info['id']); s=get_story(sid)
     if not s: raise web.HTTPNotFound()
     try:
-        await request.app['bot'].send_message(s['user_id'],'💬 С вами хочет связаться сотрудник поддержки. Если вы готовы продолжить диалог, откройте «🆘 Экстренная поддержка».')
+        await notify_user(s['user_id'],'💬 С вами хочет связаться сотрудник поддержки. Если вы готовы продолжить диалог, откройте «🆘 Экстренная поддержка».')
     except Exception as e:
         print('MINIAPP CONTACT ERROR:',e)
     log_admin_action(uid,'miniapp_contact_user',story_id=sid,user_id=s['user_id'])

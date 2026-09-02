@@ -5,6 +5,7 @@ from aiogram.fsm.state import State,StatesGroup
 from config import ADMIN_IDS,CHANNEL_ID,CHANNEL_USERNAME
 from database import get_story,get_latest_safety_decision,publish_story,reject_story,get_story_reaction_counts,set_story_reaction,get_user_story_reaction,lock_story,is_admin_active,unlock_story,update_story_content,log_admin_action,get_admin_role,record_kpi_event,update_ai_result
 from keyboards import channel_story_keyboard,published_story_keyboard
+from notifications import notify_user
 from ai import analyze_story
 router=Router()
 callback_router=router
@@ -31,7 +32,7 @@ async def publish_callback(q:CallbackQuery):
         await q.message.edit_text((q.message.text or '')+'\n\n✅ <b>ОПУБЛИКОВАНО</b>',reply_markup=None)
         try:
             text='🎉 <b>Ваша история была опубликована!</b>\n\nСпасибо, что поделились ей с нами 💙'
-            await q.bot.send_message(story['user_id'],text,reply_markup=published_story_keyboard(link,sid))
+            await notify_user(story['user_id'],text,reply_markup=published_story_keyboard(link,sid))
         except Exception as exc: log_admin_action(q.from_user.id,'publish_user_notify_error',story_id=sid,user_id=story['user_id'],details=str(exc))
         log_admin_action(q.from_user.id,'publish',story_id=sid,user_id=story['user_id'])
     except Exception as exc: await q.answer(f'Ошибка: {exc}',show_alert=True)

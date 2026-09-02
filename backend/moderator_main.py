@@ -8,7 +8,7 @@ from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 
-from config import MODERATOR_BOT_TOKEN, CHANNEL_ID, ADMIN_IDS, TIMEZONE, DATABASE_URL, REDIS_URL
+from config import MODERATOR_BOT_TOKEN, BOT_TOKEN, CHANNEL_ID, ADMIN_IDS, TIMEZONE, DATABASE_URL, REDIS_URL
 from database import (
     init_db, ensure_platform_defaults, get_due_notification_users, mark_notification_sent,
     get_due_scheduled_stories, claim_scheduled_story, release_scheduled_story, publish_story,
@@ -21,6 +21,7 @@ from moderator_entry import router as moderator_entry_router
 from callbacks import callback_router, get_channel_message_link
 from admin_api import start_admin_web
 from keyboards import channel_story_keyboard, published_story_keyboard
+from notifications import notify_user
 
 TZ = ZoneInfo(TIMEZONE)
 
@@ -29,7 +30,7 @@ async def support_notifications(bot):
     now = datetime.now(TZ)
     for uid in get_due_notification_users(now.isoformat()):
         try:
-            await bot.send_message(uid, '🆘 <b>Напоминание о поддержке</b>\n\nЕсли вам тяжело или хочется поговорить с сотрудником, откройте «🆘 Экстренная поддержка».', parse_mode='HTML')
+            await notify_user(uid, '🆘 <b>Напоминание о поддержке</b>\n\nЕсли вам тяжело или хочется поговорить с сотрудником, откройте «🆘 Экстренная поддержка».')
             mark_notification_sent(uid)
         except Exception as e:
             log_system_error('moderator-worker', str(e), f'user={uid}')
@@ -51,7 +52,7 @@ async def publish_scheduled(bot, story):
         link=get_channel_message_link(bot,sent.message_id)
         if link:
             await sent.edit_reply_markup(reply_markup=channel_story_keyboard(sid,link,get_story_reaction_counts(sid)))
-            await bot.send_message(story['user_id'],'🎉 <b>Ваша история опубликована!</b>\n\nСпасибо, что поделились 💙',parse_mode='HTML',reply_markup=published_story_keyboard(link,sid,get_story_reaction_counts(sid)))
+            await notify_user(story['user_id'],'🎉 <b>Ваша история опубликована!</b>\n\nСпасибо, что поделились 💙',reply_markup=published_story_keyboard(link,sid,get_story_reaction_counts(sid)))
         log_admin_action(story['scheduled_by'] or ADMIN_IDS[0],'scheduled_publish',story_id=sid,user_id=story['user_id'])
     except Exception as e:
         log_system_error('scheduler', str(e), f'story={sid}')

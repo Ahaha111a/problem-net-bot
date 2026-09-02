@@ -24,11 +24,6 @@ ADMIN_IDS = [
 # ADMIN_IDS is required only for moderator authorization; the user bot can run without it.
 
 CHANNEL_ID = _required("CHANNEL_ID")
-CHANNEL_USERNAME = os.getenv("CHANNEL_USERNAME", "").strip().lstrip("@")
-try:
-    CHANNEL_FIRST_MESSAGE_ID = max(1, int(os.getenv("CHANNEL_FIRST_MESSAGE_ID", "1")))
-except (TypeError, ValueError):
-    CHANNEL_FIRST_MESSAGE_ID = 1
 CHANNEL_USERNAME = os.getenv("CHANNEL_USERNAME", "").strip().lstrip("@").strip()
 try:
     CHANNEL_FIRST_MESSAGE_ID = max(1, int(os.getenv("CHANNEL_FIRST_MESSAGE_ID", "1")))

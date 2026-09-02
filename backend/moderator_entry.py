@@ -3,8 +3,10 @@ from aiogram.types import Message,ReplyKeyboardRemove,CallbackQuery,InlineKeyboa
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State,StatesGroup
 from config import ADMIN_IDS
-from database import is_admin_active,get_admin_role,get_stats,get_all_stories,get_waiting_stories,get_story,get_open_dialogs,get_dialog,get_moderator_performance,get_system_health,get_system_errors,get_ai_model_configs,get_ai_model_health,get_ai_priority_queue,get_lms_full,get_extended_stats,get_kpi_dashboard,get_all_settings,get_ai_checks,employees
+from database import is_admin_active,get_admin_role,get_stats,get_all_stories,get_waiting_stories,get_story,get_open_dialogs,get_dialog,get_moderator_performance,get_system_health,get_system_errors,get_ai_model_configs,get_ai_model_health,get_ai_priority_queue,get_lms_full,get_extended_stats,get_kpi_dashboard,get_all_settings,get_ai_checks
 from keyboards import admin_keyboard,moderation_keyboard
+from staff_ops import employees, employee, permissions, role_history, promotion_history, violations, courses, assignments, change_role, set_status, set_permission
+from notifications import notify_user
 router=Router()
 
 def is_admin(uid): return int(uid) in {int(x) for x in ADMIN_IDS} and is_admin_active(uid)
@@ -74,7 +76,7 @@ async def support_send(message:Message,state:FSMContext):
     data=await state.get_data(); did=int(data['dialog_id']); d=get_dialog(did); text=(message.text or '').strip()
     if not d or not text: await message.answer('❗ Диалог не найден.'); await state.clear(); return
     add_support_message(did,message.from_user.id,'admin',text[:4000]); record_kpi_event(message.from_user.id,'support_response')
-    try: await message.bot.send_message(d['user_id'],f'💬 <b>Сообщение поддержки:</b>\n\n{text[:4000]}')
+    try: await notify_user(d['user_id'],f'💬 <b>Сообщение поддержки:</b>\n\n{text[:4000]}')
     except Exception as exc: await message.answer(f'⚠️ Ответ сохранён, но Telegram не принял сообщение: {exc}')
     await state.clear(); await message.answer('✅ Ответ отправлен.')
 
@@ -102,9 +104,61 @@ async def ai_control(message:Message):
 @router.message(F.text=='👥 Сотрудники')
 async def staff(message:Message):
     if not is_admin(message.from_user.id): return
-    rows=employees(); await message.answer('👥 <b>Сотрудники</b>\n\n'+('\n'.join(f"• {r['admin_id']} — {r.get('full_name') or 'Без имени'} — {r.get('status')} — {r.get('role') or 'moderator'}" for r in rows[:50]) if rows else 'Сотрудников нет.'))
+    rows=employees()
+    if not rows:
+        await message.answer('👥 Сотрудников нет.'); return
+    await message.answer('👥 <b>Сотрудники</b>\n\nНажмите на сотрудника для профиля и управления ролью/статусом.')
+    for r in rows[:50]:
+        target=int(r['admin_id'])
+        await message.answer(f"👤 <b>{r.get('full_name') or 'Без имени'}</b>\nID: {target}\nСтатус: {r.get('status')}\nРоль: {r.get('role') or 'moderator'}", reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text='Открыть профиль',callback_data=f'staff:view:{target}')]]))
 
 @router.message(F.text=='🎓 Обучение')
 async def training(message:Message):
     if not is_admin(message.from_user.id): return
     d=get_lms_full(); await message.answer(f"🎓 <b>LMS</b>\n\nКурсов: {len(d['courses'])}\nУроков: {len(d['lessons'])}\nТестов: {len(d['tests'])}\nПрактика: {len(d['practical_tasks'])}\nЭкзамены: {len(d['exams'])}\nНазначения: {len(d['assignments'])}\n\nСертификатов нет — они удалены из концепции.")
+
+# =========================================================
+# EMPLOYEE ACTIONS (bot fallback for Mini App)
+# =========================================================
+
+@router.callback_query(F.data.startswith('staff:role:'))
+async def staff_role_callback(q: CallbackQuery):
+    if not is_admin(q.from_user.id) or get_admin_role(q.from_user.id) != 'owner':
+        await q.answer('Только владелец', show_alert=True); return
+    _, _, target, role = q.data.split(':', 3)
+    if role not in {'owner','moderator','support','analyst','editor'}:
+        await q.answer('Недопустимая роль', show_alert=True); return
+    change_role(int(target), role, q.from_user.id, 'Из панели Moderator Bot')
+    await q.answer(f'Роль: {role}')
+    await q.message.answer(f'✅ Сотруднику {target} назначена роль <b>{role}</b>.')
+
+
+@router.callback_query(F.data.startswith('staff:status:'))
+async def staff_status_callback(q: CallbackQuery):
+    if not is_admin(q.from_user.id) or get_admin_role(q.from_user.id) != 'owner':
+        await q.answer('Только владелец', show_alert=True); return
+    _, _, target, status = q.data.split(':', 3)
+    if status not in {'trainee','employee','senior','leader','fired'}:
+        await q.answer('Недопустимый статус', show_alert=True); return
+    set_status(int(target), status, q.from_user.id, 'Из панели Moderator Bot')
+    await q.answer(f'Статус: {status}')
+    await q.message.answer(f'✅ Сотруднику {target} установлен статус <b>{status}</b>.')
+
+
+@router.callback_query(F.data.startswith('staff:view:'))
+async def staff_view_callback(q: CallbackQuery):
+    if not is_admin(q.from_user.id):
+        await q.answer('Нет доступа', show_alert=True); return
+    target=int(q.data.rsplit(':',1)[1]); e=employee(target)
+    if not e:
+        await q.answer('Сотрудник не найден', show_alert=True); return
+    lines=[f'👤 <b>{e.get("full_name") or "Сотрудник"}</b>',f'ID: {target}',f'Статус: {e.get("status")}',f'Роль: {e.get("role") or "moderator"}',f'Должность: {e.get("position") or "—"}','','🔐 <b>Разрешения</b>']
+    perms=permissions(target); lines += [f'• {p["permission"]}: {"✅" if p["enabled"] else "❌"}' for p in perms] or ['• нет']
+    kb=[]
+    if get_admin_role(q.from_user.id)=='owner':
+        kb += [[InlineKeyboardButton(text='👤 Moderator',callback_data=f'staff:role:{target}:moderator'),InlineKeyboardButton(text='💬 Support',callback_data=f'staff:role:{target}:support')],
+               [InlineKeyboardButton(text='📊 Analyst',callback_data=f'staff:role:{target}:analyst'),InlineKeyboardButton(text='✏️ Editor',callback_data=f'staff:role:{target}:editor')],
+               [InlineKeyboardButton(text='🟢 Employee',callback_data=f'staff:status:{target}:employee'),InlineKeyboardButton(text='⭐ Senior',callback_data=f'staff:status:{target}:senior')],
+               [InlineKeyboardButton(text='🚫 Уволить',callback_data=f'staff:status:{target}:fired')]]
+    await q.message.answer('\n'.join(lines),reply_markup=InlineKeyboardMarkup(inline_keyboard=kb) if kb else None)
+    await q.answer()
