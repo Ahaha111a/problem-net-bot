@@ -16,7 +16,7 @@ from database import (
     get_all_settings, set_setting, get_ai_checks, set_ai_check, lock_story, get_story_lock, unlock_story,
     get_system_errors, get_system_health, integrity_check, get_moderator_goals, set_moderator_goal,
     get_moderator_performance, get_training, assign_training, set_training_status, get_ai_priority_queue, create_ai_priority,
-    get_story, get_all_stories, get_waiting_stories, get_scheduled_stories,
+    get_story, get_all_stories, get_waiting_stories, get_scheduled_stories, get_stats, get_user_count, get_support_stats, get_setting,
     get_open_dialogs, get_dialog, get_dialog_messages, get_admin_audit,
     get_extended_stats, get_analytics, get_admin_roles, get_admin_role,
     set_admin_role, get_complaints, update_complaint, get_story_versions,
@@ -271,9 +271,20 @@ async def story_publish(request):
     text=(row['post_text'] or '').strip()
     if not text: raise web.HTTPBadRequest(text='Post is empty')
     bot=request.app['bot']
-    sent=await bot.send_message(CHANNEL_ID,text,reply_markup=channel_story_keyboard(sid,None))
-    publish_story(sid,sent.message_id); record_kpi_event(uid,'publish'); log_admin_action(uid,'miniapp_publish',story_id=sid,user_id=row['user_id'])
-    return web.json_response({'story':_json(get_story(sid)),'message_id':sent.message_id})
+    sent=await bot.send_message(CHANNEL_ID,text)
+    publish_story(sid,sent.message_id)
+    raw_channel=str(CHANNEL_ID)
+    channel_username=os.getenv('CHANNEL_USERNAME','').strip().lstrip('@')
+    link=(f'https://t.me/{channel_username}/{sent.message_id}' if channel_username else (f'https://t.me/c/{raw_channel[4:]}/{sent.message_id}' if raw_channel.startswith('-100') else None))
+    if link:
+        await sent.edit_reply_markup(reply_markup=channel_story_keyboard(sid,link,{}))
+    record_kpi_event(uid,'publish')
+    try:
+        await bot.send_message(row['user_id'],'🎉 <b>Ваша история была опубликована!</b>\n\nСпасибо, что поделились ей с нами 💙',reply_markup=published_story_keyboard(link,sid))
+    except Exception as exc:
+        log_admin_action(uid,'publish_user_notify_error',story_id=sid,user_id=row['user_id'],details=str(exc))
+    log_admin_action(uid,'miniapp_publish',story_id=sid,user_id=row['user_id'])
+    return web.json_response({'story':_json(get_story(sid)),'message_id':sent.message_id,'channel_link':link})
 
 async def story_reject(request):
     uid=auth(request, {'owner','moderator','editor'}); sid=int(request.match_info['id']); row=get_story(sid)
@@ -553,44 +564,29 @@ async def founder_page(request):
 
 
 async def founder_api(request):
-    uid = auth(request, {'owner'})
-    redis_status = {"status": "offline"}
-    redis_url = os.getenv("REDIS_URL", "").strip()
-    if redis_url:
+    uid=auth(request, {'owner'})
+    import asyncio
+    async def safe(label,fn,default):
+        try: return await asyncio.wait_for(asyncio.to_thread(fn),timeout=10)
+        except Exception as exc:
+            print(f'⚠️ Founder {label} failed: {type(exc).__name__}: {exc}')
+            return default
+    dashboard_data=await safe('dashboard',founder_dashboard,{'stats':{},'hourly_load':[],'publications':[],'users':[],'active_moderators':0,'average_wait_seconds':0})
+    ai_models=await safe('ai_models',get_ai_model_configs,[]); ai_health=await safe('ai_health',get_ai_model_health,[])
+    deployments=await safe('deployments',lambda:get_deployment_events(50),[]); safety=await safe('safety',lambda:get_ai_safety_events(limit=50),[])
+    settings=await safe('settings',get_all_settings,[]); ai_checks=await safe('ai_checks',get_ai_checks,[])
+    ops_data={
+      'workload':await safe('workload',workload,[]),'sla':await safe('sla',sla_dashboard,{'summary':{},'by_priority':[]}),
+      'prompts':await safe('prompts',prompts,[]),'policies':await safe('policies',policies,[]),
+      'incidents':await safe('incidents',lambda:incidents(100),[]),'shadow':await safe('shadow',lambda:shadow_runs(100),[])}
+    redis_status={'status':'offline'}; url=os.getenv('REDIS_URL','').strip()
+    if url:
         try:
             from redis.asyncio import Redis
-            r = Redis.from_url(redis_url, decode_responses=True)
-            await r.ping()
-            queue = os.getenv("AI_QUEUE_NAME", "problem-net:ai")
-            redis_status = {
-                "status": "online",
-                "queue_length": await r.xlen(queue),
-                "worker_heartbeats": len(await r.keys(f"{queue}:worker:*:heartbeat")),
-            }
-            await r.aclose()
-        except Exception as exc:
-            redis_status = {"status": "error", "details": str(exc)}
-    return web.json_response({
-        "ok": True,
-        "founder_id": uid,
-        "dashboard": founder_dashboard(),
-        "ai_models": _rows(get_ai_model_configs()),
-        "ai_health": _rows(get_ai_model_health()),
-        "deployments": _rows(get_deployment_events(50)),
-        "safety": _rows(get_ai_safety_events(limit=50)),
-        "settings": _rows(get_all_settings()),
-        "ai_checks": _rows(get_ai_checks()),
-        "redis": redis_status,
-        "ops": {
-            "workload": _rows(workload()),
-            "sla": sla_dashboard(),
-            "prompts": _rows(prompts()),
-            "policies": _rows(policies()),
-            "incidents": _rows(incidents(100)),
-            "shadow": _rows(shadow_runs(100)),
-        },
-    })
-
+            r=Redis.from_url(url,decode_responses=True,socket_connect_timeout=3,socket_timeout=3); await r.ping(); q=os.getenv('AI_QUEUE_NAME','problem-net:ai')
+            redis_status={'status':'online','queue_length':await r.xlen(q),'worker_heartbeats':len(await r.keys(f'{q}:worker:*:heartbeat'))}; await r.aclose()
+        except Exception as exc: redis_status={'status':'error','details':str(exc)}
+    return web.json_response({'ok':True,'founder_id':uid,'dashboard':dashboard_data,'ai_models':_rows(ai_models),'ai_health':_rows(ai_health),'deployments':_rows(deployments),'safety':_rows(safety),'settings':_rows(settings),'ai_checks':_rows(ai_checks),'redis':redis_status,'ops':{'workload':_rows(ops_data['workload']),'sla':ops_data['sla'],'prompts':_rows(ops_data['prompts']),'policies':_rows(ops_data['policies']),'incidents':_rows(ops_data['incidents']),'shadow':_rows(ops_data['shadow'])}})
 
 async def ai_control_api(request):
     uid = auth(request, {'owner'})
@@ -801,6 +797,7 @@ def create_app(bot):
     app.router.add_get('/founder', founder_page)
     app.router.add_get('/founder/', founder_page)
     app.router.add_get('/founder/api', founder_api)
+    app.router.add_get('/admin/api/founder', founder_api)
     app.router.add_get('/admin/{name}', static_file)
     app.router.add_get('/assets/{name}', static_file)
     app.router.add_get('/admin/api/ping', api_health)

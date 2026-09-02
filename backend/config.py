@@ -24,6 +24,16 @@ ADMIN_IDS = [
 # ADMIN_IDS is required only for moderator authorization; the user bot can run without it.
 
 CHANNEL_ID = _required("CHANNEL_ID")
+CHANNEL_USERNAME = os.getenv("CHANNEL_USERNAME", "").strip().lstrip("@")
+try:
+    CHANNEL_FIRST_MESSAGE_ID = max(1, int(os.getenv("CHANNEL_FIRST_MESSAGE_ID", "1")))
+except (TypeError, ValueError):
+    CHANNEL_FIRST_MESSAGE_ID = 1
+CHANNEL_USERNAME = os.getenv("CHANNEL_USERNAME", "").strip().lstrip("@").strip()
+try:
+    CHANNEL_FIRST_MESSAGE_ID = max(1, int(os.getenv("CHANNEL_FIRST_MESSAGE_ID", "1")))
+except (TypeError, ValueError):
+    CHANNEL_FIRST_MESSAGE_ID = 1
 
 DATABASE_URL = os.getenv("DATABASE_URL", "").strip()
 REDIS_URL = os.getenv("REDIS_URL", "").strip()
@@ -32,13 +42,13 @@ AI_EMERGENCY_DIRECT = os.getenv("AI_EMERGENCY_DIRECT", "1").strip() == "1"
 BACKUP_DIR = os.getenv("BACKUP_DIR", "/app/backups").strip() or "/app/backups"
 
 _railway_public_domain = os.getenv("RAILWAY_PUBLIC_DOMAIN", "").strip().rstrip("/")
-ADMIN_MINIAPP_URL = os.getenv("ADMIN_MINIAPP_URL", "").strip()
+ADMIN_MINIAPP_URL = os.getenv("ADMIN_MINIAPP_URL", "").strip().rstrip("/")
 if not ADMIN_MINIAPP_URL and _railway_public_domain:
     ADMIN_MINIAPP_URL = f"https://{_railway_public_domain}/admin"
 _mini_base = ADMIN_MINIAPP_URL.rstrip("/")
 if _mini_base.endswith("/admin"):
     _mini_base = _mini_base[:-6]
-FOUNDER_URL = os.getenv("FOUNDER_URL", (_mini_base + "/founder") if _mini_base else "").strip()
+FOUNDER_URL = os.getenv("FOUNDER_URL", (_mini_base + "/founder") if _mini_base else "").strip().rstrip("/")
 TIMEZONE = os.getenv("TIMEZONE", "Europe/Moscow").strip() or "Europe/Moscow"
 
 # AI defaults can be changed from Mini App without changing code.
