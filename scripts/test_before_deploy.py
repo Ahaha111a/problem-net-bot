@@ -21,6 +21,8 @@ if not compileall.compile_dir("backend", quiet=1):
 sys.path.insert(0, "backend")
 for name in [
     "config", "database", "ai", "ai_queue", "ai_worker",
+    "post_generator", "ops", "staff_ops", "notifications",
+    "handlers", "callbacks", "moderator_entry",
     "admin_api", "moderator_main", "user_main",
 ]:
     importlib.import_module(name)
