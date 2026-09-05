@@ -26,6 +26,7 @@ from database import (
     update_story_content, update_post, schedule_story, cancel_scheduled_story,
     publish_story, reject_story, log_admin_action,
     get_support_metrics, get_support_queue, get_category_stats, get_publication_hour_stats,
+    get_lms_employee_status, assign_required_lms_for_employee, get_lms_progress,
     get_funnel_stats, get_security_events, get_publication_queue, auto_plan_stories,
     create_repost_job, get_repost_jobs, record_kpi_event,
     founder_dashboard, get_ai_model_configs, set_ai_model_config, get_ai_model_health,
@@ -40,7 +41,7 @@ from ops import (
     workload, sla_dashboard, prompts, save_prompt, activate_prompt, policies, set_policy,
     shadow_runs, incidents, create_incident, resolve_incident, railway_rollback, record_rollback,
 )
-from staff_ops import employees,employee,change_role,set_status,set_permission,permissions,role_history,promotion_history,violations,courses,assignments,assign_course,update_assignment,leaderboard
+from staff_ops import employees,employee,change_role,set_status,set_permission,permissions,role_history,promotion_history,violations,courses,assignments,assign_course,update_assignment,leaderboard,add_employee
 
 TZ = ZoneInfo('Europe/Moscow')
 BASE_DIR = Path(__file__).resolve().parent
@@ -51,16 +52,29 @@ if not WEB_DIR.exists():
     WEB_DIR = BASE_DIR
 
 
-def _json(row):
-    if row is None:
-        return None
-    if hasattr(row, 'keys'):
-        return {k: row[k] for k in row.keys()}
-    return row
+def _json(value):
+    """Recursively convert DB objects to JSON-safe primitives."""
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    if isinstance(value, (datetime,)):
+        return value.isoformat()
+    if hasattr(value, 'isoformat') and value.__class__.__name__ == 'date':
+        return value.isoformat()
+    if hasattr(value, 'keys'):
+        return {str(k): _json(value[k]) for k in value.keys()}
+    if isinstance(value, dict):
+        return {str(k): _json(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple, set)):
+        return [_json(v) for v in value]
+    return str(value)
 
 
 def _rows(rows):
-    return [_json(r) for r in rows]
+    return _json(rows or [])
+
+
+def j(data, **kwargs):
+    return web.json_response(_json(data), **kwargs)
 
 
 def validate_init_data(init_data: str) -> dict | None:
@@ -108,16 +122,38 @@ def auth(request, allowed=None):
         uid = int(user.get('id', 0))
     except (TypeError, ValueError):
         uid = 0
-    if uid not in {int(x) for x in ADMIN_IDS}:
-        raise web.HTTPForbidden(text='Доступ только для сотрудников проекта')
+    configured_ids = {int(x) for x in ADMIN_IDS}
+    if uid not in configured_ids:
+        try:
+            con = get_connection(); role_row = con.execute('SELECT role FROM admin_roles WHERE user_id=?', (uid,)).fetchone(); con.close()
+        except Exception:
+            role_row = None
+        if not role_row:
+            raise web.HTTPForbidden(text='Доступ только для сотрудников проекта')
 
     # The first configured admin is the bootstrap owner even if the roles table
     # is temporarily unavailable.
     role = 'owner' if ADMIN_IDS and uid == int(ADMIN_IDS[0]) else 'moderator'
     try:
-        role = get_admin_role(uid) or role
+        db_role = get_admin_role(uid)
+        # Bootstrap owner cannot be downgraded by stale DB state.
+        role = 'owner' if ADMIN_IDS and uid == int(ADMIN_IDS[0]) else (db_role or role)
     except Exception as exc:
         print(f'⚠️ auth role lookup failed: {type(exc).__name__}: {exc}')
+
+    # Mandatory LMS gate: every non-owner staff member must complete all required courses.
+    # LMS endpoints remain available so the employee can complete the training.
+    lms_paths = ('/admin/api/ping', '/admin/api/lms', '/admin/api/lms/', '/admin/api/lms/full', '/admin/api/lms/employee/', '/admin/api/lms/test/submit')
+    if role != 'owner' and not any(request.path.startswith(x) for x in lms_paths):
+        try:
+            from database import get_lms_employee_status
+            training_status = get_lms_employee_status(uid)
+            if not training_status.get('complete', True):
+                raise web.HTTPForbidden(text='Обязательное обучение не завершено. Откройте раздел 🎓 Обучение.')
+        except web.HTTPException:
+            raise
+        except Exception as exc:
+            print(f'⚠️ LMS gate lookup failed: {type(exc).__name__}: {exc}')
 
     # Fired employees lose access immediately when the employee table is available.
     con = None
@@ -143,7 +179,7 @@ async def index(request):
     return web.FileResponse(WEB_DIR / 'index.html')
 
 async def health(request):
-    return web.json_response({
+    return j({
         'ok': True,
         'ready': True,
         'service': 'problem-net-admin',
@@ -185,7 +221,7 @@ async def error_middleware(request, handler):
         print(f'Error: {type(exc).__name__}: {exc}')
         traceback.print_exc()
         print('========================================================\n')
-        return web.json_response(
+        return j(
             {'ok': False, 'error': 'Внутренняя ошибка сервера', 'details': str(exc)},
             status=500,
         )
@@ -194,7 +230,7 @@ async def error_middleware(request, handler):
 
 async def api_health(request):
     uid = auth(request)
-    return web.json_response({'ok': True, 'user_id': uid, 'timezone': 'Europe/Moscow'})
+    return j({'ok': True, 'user_id': uid, 'timezone': 'Europe/Moscow'})
 
 async def dashboard(request):
     uid = auth(request)
@@ -210,7 +246,7 @@ async def dashboard(request):
     stats['users'] = safe(get_user_count, 0)
     stats['support'] = safe(get_support_stats, {'open': 0, 'new': 0, 'in_progress': 0})
     role = safe(lambda: get_admin_role(uid), 'owner' if ADMIN_IDS and uid == int(ADMIN_IDS[0]) else 'moderator')
-    return web.json_response({
+    return j({
         'ok': True,
         'me': {'id': uid, 'role': role},
         'timezone': 'Europe/Moscow',
@@ -229,12 +265,12 @@ async def stories(request):
     rows=get_all_stories()
     if status:
         rows=[r for r in rows if r['status']==status]
-    return web.json_response({'items':_rows(rows[:100])})
+    return j({'items':_rows(rows[:100])})
 
 async def story(request):
     auth(request, {'owner','moderator','editor','analyst'}); sid=int(request.match_info['id']); row=get_story(sid)
     if not row: raise web.HTTPNotFound()
-    return web.json_response({'story':_json(row),'versions':_rows(get_story_versions(sid))})
+    return j({'story':_json(row),'versions':_rows(get_story_versions(sid))})
 
 async def story_edit(request):
     uid=auth(request, {'owner','moderator','editor'}); sid=int(request.match_info['id']); payload=await request.json()
@@ -242,11 +278,11 @@ async def story_edit(request):
     if not row: raise web.HTTPNotFound()
     existing_lock=get_story_lock(sid)
     if existing_lock and int(existing_lock['admin_id']) != uid:
-        return web.json_response({'ok':False,'locked':True,'admin_id':existing_lock['admin_id'],'expires_at':existing_lock['expires_at']}, status=409)
+        return j({'ok':False,'locked':True,'admin_id':existing_lock['admin_id'],'expires_at':existing_lock['expires_at']}, status=409)
     text=str(payload.get('text', row['text']))[:20000]
     post=str(payload.get('post_text', row['post_text'] or ''))[:10000]
     update_story_content(sid,text,post,uid); record_kpi_event(uid,'edit',0,correction=bool(row['post_text'] and post != row['post_text'])); log_admin_action(uid,'miniapp_edit_story',story_id=sid,user_id=row['user_id'])
-    return web.json_response({'story':_json(get_story(sid))})
+    return j({'story':_json(get_story(sid))})
 
 async def story_ai(request):
     uid=auth(request, {'owner','moderator','editor'}); sid=int(request.match_info['id']); row=get_story(sid)
@@ -254,7 +290,7 @@ async def story_ai(request):
     result=await analyze_story(row['text']);
     from database import update_ai_result
     update_ai_result(sid,result); log_admin_action(uid,'miniapp_ai_retry',story_id=sid,user_id=row['user_id'])
-    return web.json_response({'story':_json(get_story(sid))})
+    return j({'story':_json(get_story(sid))})
 
 async def story_quality_ai(request):
     uid=auth(request, {'owner','moderator','editor'}); sid=int(request.match_info['id']); row=get_story(sid)
@@ -264,7 +300,7 @@ async def story_quality_ai(request):
     from database import set_setting
     # сохраняем результат в версии/аудите, не меняя схему stories
     log_admin_action(uid,'miniapp_ai_quality',story_id=sid,user_id=row['user_id'],details=result)
-    return web.json_response({'quality':result,'story':_json(row)})
+    return j({'quality':result,'story':_json(row)})
 
 async def story_moderate_ai(request):
     uid=auth(request, {'owner','moderator','editor'}); sid=int(request.match_info['id']); row=get_story(sid)
@@ -272,7 +308,7 @@ async def story_moderate_ai(request):
     result=await moderate_story(row['text'])
     from database import update_ai_moderation_result
     update_ai_moderation_result(sid,result); log_admin_action(uid,'miniapp_ai_moderate',story_id=sid,user_id=row['user_id'])
-    return web.json_response({'story':_json(get_story(sid))})
+    return j({'story':_json(get_story(sid))})
 
 async def story_publish(request):
     uid=auth(request, {'owner','moderator','editor'}); sid=int(request.match_info['id']); row=get_story(sid)
@@ -296,14 +332,14 @@ async def story_publish(request):
     except Exception as exc:
         log_admin_action(uid,'publish_user_notify_error',story_id=sid,user_id=row['user_id'],details=str(exc))
     log_admin_action(uid,'miniapp_publish',story_id=sid,user_id=row['user_id'])
-    return web.json_response({'story':_json(get_story(sid)),'message_id':sent.message_id,'channel_link':link})
+    return j({'story':_json(get_story(sid)),'message_id':sent.message_id,'channel_link':link})
 
 async def story_reject(request):
     uid=auth(request, {'owner','moderator','editor'}); sid=int(request.match_info['id']); row=get_story(sid)
     if not row: raise web.HTTPNotFound()
     payload=await request.json(); reason=str(payload.get('reason',''))[:1000]
     reject_story(sid,reason); record_kpi_event(uid,'reject'); log_admin_action(uid,'miniapp_reject',story_id=sid,user_id=row['user_id'])
-    return web.json_response({'story':_json(get_story(sid))})
+    return j({'story':_json(get_story(sid))})
 
 async def story_schedule(request):
     uid=auth(request, {'owner','moderator','editor'}); sid=int(request.match_info['id']); row=get_story(sid)
@@ -317,13 +353,13 @@ async def story_schedule(request):
         raise web.HTTPBadRequest(text='Invalid future datetime')
     schedule_story(sid,dt.astimezone(ZoneInfo('UTC')).isoformat(),uid)
     log_admin_action(uid,'miniapp_schedule',story_id=sid,user_id=row['user_id'],details=dt.isoformat())
-    return web.json_response({'story':_json(get_story(sid))})
+    return j({'story':_json(get_story(sid))})
 
 async def story_unschedule(request):
     uid=auth(request, {'owner','moderator','editor'}); sid=int(request.match_info['id']); row=get_story(sid)
     if not row: raise web.HTTPNotFound()
     cancel_scheduled_story(sid); log_admin_action(uid,'miniapp_unschedule',story_id=sid)
-    return web.json_response({'story':_json(get_story(sid))})
+    return j({'story':_json(get_story(sid))})
 
 async def bulk(request):
     uid=auth(request, {'owner','moderator','editor'}); payload=await request.json(); ids=[int(x) for x in payload.get('ids',[])]; action=payload.get('action')
@@ -334,24 +370,24 @@ async def bulk(request):
         if action=='reject': reject_story(sid,'Массовое отклонение через Mini App'); changed.append(sid)
         elif action=='unschedule': cancel_scheduled_story(sid); changed.append(sid)
     log_admin_action(uid,f'miniapp_bulk_{action}',details=json.dumps(changed))
-    return web.json_response({'changed':changed})
+    return j({'changed':changed})
 
 async def versions(request):
-    auth(request); sid=int(request.match_info['id']); return web.json_response({'items':_rows(get_story_versions(sid))})
+    auth(request); sid=int(request.match_info['id']); return j({'items':_rows(get_story_versions(sid))})
 
 async def restore_version(request):
     uid=auth(request, {'owner','moderator','editor'}); vid=int(request.match_info['version_id']); row=restore_story_version(vid,uid)
     if not row: raise web.HTTPNotFound()
     log_admin_action(uid,'miniapp_restore_version',story_id=row['id'])
-    return web.json_response({'story':_json(row)})
+    return j({'story':_json(row)})
 
 async def dialogs(request):
-    auth(request, {'owner','moderator','support'}); return web.json_response({'items':_rows(get_open_dialogs())})
+    auth(request, {'owner','moderator','support'}); return j({'items':_rows(get_open_dialogs())})
 
 async def dialog(request):
     auth(request, {'owner','moderator','support'}); did=int(request.match_info['id']); d=get_dialog(did)
     if not d: raise web.HTTPNotFound()
-    return web.json_response({'dialog':_json(d),'messages':_rows(get_dialog_messages(did)),'sla':_json(get_support_priority(did))})
+    return j({'dialog':_json(d),'messages':_rows(get_dialog_messages(did)),'sla':_json(get_support_priority(did))})
 
 async def dialog_update(request):
     uid=auth(request, {'owner','moderator','support'}); did=int(request.match_info['id']); d=get_dialog(did)
@@ -365,37 +401,37 @@ async def dialog_update(request):
         from database import set_dialog_status
         set_dialog_status(did,p['status'])
     log_admin_action(uid,'miniapp_dialog_update',dialog_id=did,user_id=d['user_id'])
-    return web.json_response({'dialog':_json(get_dialog(did)),'sla':_json(get_support_priority(did))})
+    return j({'dialog':_json(get_dialog(did)),'sla':_json(get_support_priority(did))})
 
 async def complaints(request):
-    auth(request, {'owner','moderator','support'}); return web.json_response({'items':_rows(get_complaints(request.query.get('status'),100))})
+    auth(request, {'owner','moderator','support'}); return j({'items':_rows(get_complaints(request.query.get('status'),100))})
 
 async def complaint_update(request):
-    uid=auth(request, {'owner','moderator','support'}); cid=int(request.match_info['id']); p=await request.json(); update_complaint(cid,p.get('status'),p.get('priority'),p.get('assigned_admin_id')); log_admin_action(uid,'miniapp_complaint_update',details=str(cid)); return web.json_response({'ok':True})
+    uid=auth(request, {'owner','moderator','support'}); cid=int(request.match_info['id']); p=await request.json(); update_complaint(cid,p.get('status'),p.get('priority'),p.get('assigned_admin_id')); log_admin_action(uid,'miniapp_complaint_update',details=str(cid)); return j({'ok':True})
 
 async def roles(request):
     uid=auth(request, {'owner'})
     if get_admin_role(uid)!='owner': raise web.HTTPForbidden()
-    return web.json_response({'items':_rows(get_admin_roles())})
+    return j({'items':_rows(get_admin_roles())})
 
 async def role_update(request):
     uid=auth(request, {'owner'})
     if get_admin_role(uid)!='owner': raise web.HTTPForbidden()
     target=int(request.match_info['id']); p=await request.json(); role=p.get('role')
     if role not in {'owner','moderator','support','analyst','editor'}: raise web.HTTPBadRequest(text='Invalid role')
-    set_admin_role(target,role); log_admin_action(uid,'miniapp_role_update',user_id=target,details=role); return web.json_response({'ok':True})
+    set_admin_role(target,role); log_admin_action(uid,'miniapp_role_update',user_id=target,details=role); return j({'ok':True})
 
 async def audit(request):
-    auth(request, {'owner','analyst'}); return web.json_response({'items':_rows(get_admin_audit(200))})
+    auth(request, {'owner','analyst'}); return j({'items':_rows(get_admin_audit(200))})
 
 async def analytics(request):
-    auth(request, {'owner','analyst'}); return web.json_response({'analytics':get_analytics(),'moderators':_rows(get_moderator_metrics(30)),'top':_rows(get_top_stories(20)),'retention':_json(get_user_retention())})
+    auth(request, {'owner','analyst'}); return j({'analytics':get_analytics(),'moderators':_rows(get_moderator_metrics(30)),'top':_rows(get_top_stories(20)),'retention':_json(get_user_retention())})
 
 async def notifications(request):
-    uid=auth(request, {'owner','moderator','support','analyst','editor'}); return web.json_response({'items':_rows(get_admin_notifications(uid,False,100))})
+    uid=auth(request, {'owner','moderator','support','analyst','editor'}); return j({'items':_rows(get_admin_notifications(uid,False,100))})
 
 async def notification_read(request):
-    uid=auth(request, {'owner','moderator','support','analyst','editor'}); nid=int(request.match_info['id']); mark_admin_notification_read(nid,uid); return web.json_response({'ok':True})
+    uid=auth(request, {'owner','moderator','support','analyst','editor'}); nid=int(request.match_info['id']); mark_admin_notification_read(nid,uid); return j({'ok':True})
 
 
 async def dialog_message(request):
@@ -410,7 +446,7 @@ async def dialog_message(request):
     except Exception as e:
         print('MINIAPP SUPPORT SEND ERROR:',e)
     log_admin_action(uid,'miniapp_support_message',dialog_id=did,user_id=d['user_id'])
-    return web.json_response({'dialog':_json(get_dialog(did)),'messages':_rows(get_dialog_messages(did))})
+    return j({'dialog':_json(get_dialog(did)),'messages':_rows(get_dialog_messages(did))})
 
 async def story_contact(request):
     uid=auth(request); sid=int(request.match_info['id']); s=get_story(sid)
@@ -420,7 +456,7 @@ async def story_contact(request):
     except Exception as e:
         print('MINIAPP CONTACT ERROR:',e)
     log_admin_action(uid,'miniapp_contact_user',story_id=sid,user_id=s['user_id'])
-    return web.json_response({'ok':True})
+    return j({'ok':True})
 
 async def dialog_action(request):
     uid=auth(request, {'owner','moderator','support'}); did=int(request.match_info['id']); d=get_dialog(did)
@@ -434,20 +470,20 @@ async def dialog_action(request):
     elif action=='exit': unassign_dialog(did); set_dialog_status(did,'new')
     else: raise web.HTTPBadRequest(text='Unknown action')
     log_admin_action(uid,'miniapp_dialog_'+action,dialog_id=did,user_id=d['user_id'])
-    return web.json_response({'dialog':_json(get_dialog(did))})
+    return j({'dialog':_json(get_dialog(did))})
 
 
 async def support_metrics(request):
     auth(request, {'owner','moderator','support','analyst'})
-    return web.json_response({'metrics': _json(get_support_metrics()), 'queue': _rows(get_support_queue())})
+    return j({'metrics': _json(get_support_metrics()), 'queue': _rows(get_support_queue())})
 
 async def support_queue(request):
     auth(request, {'owner','moderator','support','analyst'})
-    return web.json_response({'items': _rows(get_support_queue())})
+    return j({'items': _rows(get_support_queue())})
 
 async def content_analytics(request):
     auth(request, {'owner','analyst','moderator','editor'})
-    return web.json_response({
+    return j({
         'categories': _rows(get_category_stats()),
         'hours': _rows(get_publication_hour_stats()),
         'funnel': _json(get_funnel_stats()),
@@ -461,7 +497,7 @@ async def auto_plan(request):
     from database import auto_plan_stories
     rows=auto_plan_stories(ids,start.astimezone(ZoneInfo('UTC')).isoformat(),interval,uid)
     log_admin_action(uid,'miniapp_auto_plan',details=json.dumps(rows,ensure_ascii=False))
-    return web.json_response({'items':rows})
+    return j({'items':rows})
 
 
 async def repost(request):
@@ -479,19 +515,19 @@ async def repost(request):
         raise web.HTTPBadRequest(text='Invalid future datetime')
     job_id = create_repost_job(sid, dt.astimezone(ZoneInfo('UTC')).isoformat(), uid)
     log_admin_action(uid, 'miniapp_repost_schedule', story_id=sid, details=dt.isoformat())
-    return web.json_response({'job_id': job_id})
+    return j({'job_id': job_id})
 
 async def reposts(request):
     auth(request, {'owner','moderator','editor','analyst'})
-    return web.json_response({'items': _rows(get_repost_jobs(100))})
+    return j({'items': _rows(get_repost_jobs(100))})
 
 async def security(request):
     auth(request, {'owner'})
-    return web.json_response({'items': _rows(get_security_events(300))})
+    return j({'items': _rows(get_security_events(300))})
 
 async def settings_api(request):
     uid=auth(request, {'owner'})
-    return web.json_response({'settings': _rows(get_all_settings()), 'ai_checks': _rows(get_ai_checks())})
+    return j({'settings': _rows(get_all_settings()), 'ai_checks': _rows(get_ai_checks())})
 
 async def settings_update(request):
     uid=auth(request, {'owner'})
@@ -501,55 +537,68 @@ async def settings_update(request):
     for key,value in (payload.get('ai_checks') or {}).items():
         set_ai_check(key,bool(value),uid)
     log_admin_action(uid,'settings_update',details=json.dumps(payload,ensure_ascii=False))
-    return web.json_response({'ok':True})
+    return j({'ok':True})
 
 async def story_lock_api(request):
     uid=auth(request, {'owner','moderator','editor'})
     sid=int(request.match_info['id']); lock=get_story_lock(sid)
     if lock and int(lock['admin_id']) != uid:
-        return web.json_response({'ok':False,'locked':True,'admin_id':lock['admin_id'],'locked_at':lock['locked_at'],'expires_at':lock['expires_at']})
+        return j({'ok':False,'locked':True,'admin_id':lock['admin_id'],'locked_at':lock['locked_at'],'expires_at':lock['expires_at']})
     minutes=int(get_setting('story_lock_minutes','20') or 20)
     row=lock_story(sid,uid,minutes)
-    return web.json_response({'ok':True,'lock':_json(row)})
+    return j({'ok':True,'lock':_json(row)})
 
 async def story_unlock_api(request):
-    uid=auth(request, {'owner','moderator','editor'}); sid=int(request.match_info['id']); unlock_story(sid,uid); return web.json_response({'ok':True})
+    uid=auth(request, {'owner','moderator','editor'}); sid=int(request.match_info['id']); unlock_story(sid,uid); return j({'ok':True})
 
 async def monitoring(request):
     auth(request, {'owner','analyst'})
-    return web.json_response({'health':_rows(get_system_health()),'errors':_rows(get_system_errors(200)),'integrity':integrity_check(),'performance':_rows(get_moderator_performance(30))})
+    return j({'health':_rows(get_system_health()),'errors':_rows(get_system_errors(200)),'integrity':integrity_check(),'performance':_rows(get_moderator_performance(30))})
 
 async def training(request):
     auth(request, {'owner','moderator'})
-    return web.json_response({'items':_rows(get_training())})
+    return j({'items':_rows(get_training())})
 
 async def training_assign_api(request):
-    uid=auth(request, {'owner'}); p=await request.json(); assign_training(int(p['admin_id']),str(p['course']),str(p['lesson']),p.get('due_at')); log_admin_action(uid,'training_assign',user_id=int(p['admin_id'])); return web.json_response({'ok':True})
+    uid=auth(request, {'owner'}); p=await request.json(); assign_training(int(p['admin_id']),str(p['course']),str(p['lesson']),p.get('due_at')); log_admin_action(uid,'training_assign',user_id=int(p['admin_id'])); return j({'ok':True})
 
 async def training_update_api(request):
-    uid=auth(request, {'owner','moderator'}); tid=int(request.match_info['id']); p=await request.json(); set_training_status(tid,p.get('status','completed'),p.get('score')); log_admin_action(uid,'training_update',details=str(tid)); return web.json_response({'ok':True})
+    uid=auth(request, {'owner','moderator'}); tid=int(request.match_info['id']); p=await request.json(); set_training_status(tid,p.get('status','completed'),p.get('score')); log_admin_action(uid,'training_update',details=str(tid)); return j({'ok':True})
 
 async def goals_api(request):
-    auth(request, {'owner','moderator','analyst'}); return web.json_response({'goals':_rows(get_moderator_goals()),'performance':_rows(get_moderator_performance(30))})
+    auth(request, {'owner','moderator','analyst'}); return j({'goals':_rows(get_moderator_goals()),'performance':_rows(get_moderator_performance(30))})
 
 async def goal_update_api(request):
-    uid=auth(request, {'owner'}); p=await request.json(); set_moderator_goal(int(p['admin_id']),str(p['period']),int(p.get('publish',0)),int(p.get('moderate',0)),int(p.get('response',0))); log_admin_action(uid,'goal_update',user_id=int(p['admin_id'])); return web.json_response({'ok':True})
+    uid=auth(request, {'owner'}); p=await request.json(); set_moderator_goal(int(p['admin_id']),str(p['period']),int(p.get('publish',0)),int(p.get('moderate',0)),int(p.get('response',0))); log_admin_action(uid,'goal_update',user_id=int(p['admin_id'])); return j({'ok':True})
 
 async def priority_queue_api(request):
-    auth(request, {'owner','moderator','editor','analyst'}); return web.json_response({'items':_rows(get_ai_priority_queue())})
+    auth(request, {'owner','moderator','editor','analyst'}); return j({'items':_rows(get_ai_priority_queue())})
 
 async def priority_create_api(request):
-    uid=auth(request, {'owner','moderator','editor'}); p=await request.json(); create_ai_priority(int(p['story_id']),p.get('priority','high'),p.get('reason','')); log_admin_action(uid,'ai_priority_create',story_id=int(p['story_id'])); return web.json_response({'ok':True})
+    uid=auth(request, {'owner','moderator','editor'}); p=await request.json(); create_ai_priority(int(p['story_id']),p.get('priority','high'),p.get('reason','')); log_admin_action(uid,'ai_priority_create',story_id=int(p['story_id'])); return j({'ok':True})
 
 
 async def employees_api(request):
- auth(request, {'owner','analyst'}); return web.json_response({'items':_rows(employees())})
+ auth(request, {'owner','analyst'}); return j({'items':_rows(employees())})
+
+async def employee_create_api(request):
+ uid=auth(request, {'owner'})
+ p=await request.json()
+ target=int(p['admin_id'])
+ name=str(p.get('full_name') or '').strip()[:200]
+ if not name: raise web.HTTPBadRequest(text='full_name required')
+ role=str(p.get('role','moderator')).strip()
+ if role=='owner': raise web.HTTPForbidden(text='Владелец задаётся только первым ADMIN_IDS')
+ e=add_employee(target,name,role,p.get('position'),uid)
+ return j({'ok':True,'employee':_json(e),'lms':_json(get_lms_employee_status(target))})
 async def employee_api(request):
- auth(request, {'owner','analyst'}); uid=int(request.match_info['id']); return web.json_response({'employee':_json(employee(uid)),'permissions':_rows(permissions(uid)),'role_history':_rows(role_history(uid)),'promotion_history':_rows(promotion_history(uid)),'violations':_rows(violations(uid)),'assignments':_rows(assignments(uid))})
+ auth(request, {'owner','analyst'}); uid=int(request.match_info['id']); return j({'employee':_json(employee(uid)),'permissions':_rows(permissions(uid)),'role_history':_rows(role_history(uid)),'promotion_history':_rows(promotion_history(uid)),'violations':_rows(violations(uid)),'assignments':_rows(assignments(uid))})
 async def employee_role_api(request):
- uid=auth(request, {'owner'}); p=await request.json(); change_role(int(request.match_info['id']),str(p['role']),uid,str(p.get('reason',''))); return web.json_response({'ok':True})
+ uid=auth(request, {'owner'}); p=await request.json(); role=str(p['role']).strip()
+ if role=='owner' and int(request.match_info['id']) != int(ADMIN_IDS[0]): raise web.HTTPForbidden(text='Владелец задаётся только первым ADMIN_IDS')
+ change_role(int(request.match_info['id']),str(p['role']),uid,str(p.get('reason',''))); return j({'ok':True})
 async def employee_status_api(request):
- uid=auth(request, {'owner'}); p=await request.json(); set_status(int(request.match_info['id']),str(p['status']),uid,str(p.get('reason',''))); return web.json_response({'ok':True})
+ uid=auth(request, {'owner'}); p=await request.json(); set_status(int(request.match_info['id']),str(p['status']),uid,str(p.get('reason',''))); return j({'ok':True})
 async def employee_permission_api(request):
  uid=auth(request, {'owner'})
  p=await request.json()
@@ -557,15 +606,23 @@ async def employee_permission_api(request):
   set_permission(int(request.match_info['id']),str(p['permission']),bool(p.get('enabled')),uid)
  except PermissionError as exc:
   raise web.HTTPConflict(text=str(exc))
- return web.json_response({'ok':True})
+ return j({'ok':True})
 async def lms_api(request):
- auth(request, {'owner','moderator','analyst'}); return web.json_response({'courses':_rows(courses()),'assignments':_rows(assignments())})
+ uid=auth(request, {'owner','moderator','analyst'})
+ return j({'courses':_rows(courses()),'assignments':_rows(assignments()),'progress':_json(get_lms_progress()),'my_training':_json(get_lms_employee_status(uid))})
+
+async def lms_employee_status_api(request):
+ uid=auth(request)
+ target=int(request.match_info['id'])
+ if target != uid and get_admin_role(uid) != 'owner': raise web.HTTPForbidden(text='Только владелец может видеть обучение другого сотрудника')
+ assign_required_lms_for_employee(target)
+ return j(get_lms_employee_status(target))
 async def lms_assign_api(request):
- auth(request, {'owner','moderator'}); p=await request.json(); assign_course(int(p['admin_id']),int(p['course_id']),p.get('due_at')); return web.json_response({'ok':True})
+ auth(request, {'owner','moderator'}); p=await request.json(); assign_course(int(p['admin_id']),int(p['course_id']),p.get('due_at')); return j({'ok':True})
 async def lms_update_api(request):
- auth(request, {'owner','moderator'}); p=await request.json(); update_assignment(int(request.match_info['id']),str(p.get('status','completed')),int(p.get('progress',100)),p.get('score')); return web.json_response({'ok':True})
+ auth(request, {'owner','moderator'}); p=await request.json(); update_assignment(int(request.match_info['id']),str(p.get('status','completed')),int(p.get('progress',100)),p.get('score')); return j({'ok':True})
 async def leaderboard_api(request):
- auth(request, {'owner','analyst','moderator'}); return web.json_response({'items':leaderboard(int(request.query.get('days','30')))})
+ auth(request, {'owner','analyst','moderator'}); return j({'items':leaderboard(int(request.query.get('days','30')))})
 
 
 async def founder_page(request):
@@ -598,12 +655,12 @@ async def founder_api(request):
             r=Redis.from_url(url,decode_responses=True,socket_connect_timeout=3,socket_timeout=3); await r.ping(); q=os.getenv('AI_QUEUE_NAME','problem-net:ai')
             redis_status={'status':'online','queue_length':await r.xlen(q),'worker_heartbeats':len(await r.keys(f'{q}:worker:*:heartbeat'))}; await r.aclose()
         except Exception as exc: redis_status={'status':'error','details':str(exc)}
-    return web.json_response({'ok':True,'founder_id':uid,'dashboard':dashboard_data,'ai_models':_rows(ai_models),'ai_health':_rows(ai_health),'deployments':_rows(deployments),'safety':_rows(safety),'settings':_rows(settings),'ai_checks':_rows(ai_checks),'redis':redis_status,'ops':{'workload':_rows(ops_data['workload']),'sla':ops_data['sla'],'prompts':_rows(ops_data['prompts']),'policies':_rows(ops_data['policies']),'incidents':_rows(ops_data['incidents']),'shadow':_rows(ops_data['shadow'])}})
+    return j({'ok':True,'founder_id':uid,'dashboard':dashboard_data,'ai_models':_rows(ai_models),'ai_health':_rows(ai_health),'deployments':_rows(deployments),'safety':_rows(safety),'settings':_rows(settings),'ai_checks':_rows(ai_checks),'redis':redis_status,'ops':{'workload':_rows(ops_data['workload']),'sla':ops_data['sla'],'prompts':_rows(ops_data['prompts']),'policies':_rows(ops_data['policies']),'incidents':_rows(ops_data['incidents']),'shadow':_rows(ops_data['shadow'])}})
 
 async def ai_control_api(request):
     uid = auth(request, {'owner'})
     if request.method == "GET":
-        return web.json_response({
+        return j({
             "models": _rows(get_ai_model_configs()),
             "health": _rows(get_ai_model_health()),
             "checks": _rows(get_ai_checks()),
@@ -622,7 +679,7 @@ async def ai_control_api(request):
         admin_id=uid,
     )
     log_admin_action(uid, "ai_model_config_update", details=json.dumps(payload, ensure_ascii=False))
-    return web.json_response({"ok": True, "models": _rows(get_ai_model_configs())})
+    return j({"ok": True, "models": _rows(get_ai_model_configs())})
 
 
 async def ai_safety_api(request):
@@ -635,12 +692,12 @@ async def ai_safety_api(request):
     result = await run_safety_pipeline(row["text"], row["post_text"] or "", sid)
     log_admin_action(uid, "ai_safety_pipeline", story_id=sid, user_id=row["user_id"],
                      details=json.dumps(result, ensure_ascii=False))
-    return web.json_response({"result": result, "events": _rows(get_ai_safety_events(sid))})
+    return j({"result": result, "events": _rows(get_ai_safety_events(sid))})
 
 
 async def lms_full_api(request):
     auth(request, {'owner', 'moderator', 'analyst'})
-    return web.json_response(get_lms_full())
+    return j(get_lms_full())
 
 
 async def lms_manage_api(request):
@@ -688,7 +745,7 @@ async def lms_manage_api(request):
     finally:
         con.close()
     log_admin_action(uid, "lms_manage", details=json.dumps(p, ensure_ascii=False))
-    return web.json_response({"ok": True, "id": new_id})
+    return j({"ok": True, "id": new_id})
 
 
 async def lms_test_submit_api(request):
@@ -696,23 +753,23 @@ async def lms_test_submit_api(request):
     payload = await request.json()
     result = submit_lms_test(int(payload["assignment_id"]), payload.get("answers", {}), uid)
     log_admin_action(uid, "lms_test_attempt", details=json.dumps(result, ensure_ascii=False))
-    return web.json_response({"ok": True, **result})
+    return j({"ok": True, **result})
 
 
 async def deployment_api(request):
     auth(request, {'owner', 'analyst'})
-    return web.json_response({"items": _rows(get_deployment_events(100))})
+    return j({"items": _rows(get_deployment_events(100))})
 
 
 
 async def workload_api(request):
     auth(request, {'owner','moderator','analyst'})
-    return web.json_response({'items': _rows(workload())})
+    return j({'items': _rows(workload())})
 
 
 async def sla_dashboard_api(request):
     auth(request, {'owner','moderator','analyst'})
-    return web.json_response(sla_dashboard())
+    return j(sla_dashboard())
 
 
 async def kpi_dashboard_api(request):
@@ -723,39 +780,39 @@ async def kpi_dashboard_api(request):
     except (TypeError, ValueError):
         raise web.HTTPBadRequest(text='days must be an integer')
     days = max(1, min(days, 365))
-    return web.json_response(get_kpi_dashboard(days))
+    return j(get_kpi_dashboard(days))
 
 
 async def prompts_api(request):
     uid = auth(request, {'owner'})
     if request.method == 'GET':
-        return web.json_response({'items': _rows(prompts(request.query.get('name')) )})
+        return j({'items': _rows(prompts(request.query.get('name')) )})
     payload = await request.json()
     row = save_prompt(str(payload['name']).strip(), str(payload['prompt_text']), uid, bool(payload.get('activate', True)))
     log_admin_action(uid, 'prompt_version_create', details=json.dumps(payload, ensure_ascii=False))
-    return web.json_response({'ok': True, 'prompt': _json(row)})
+    return j({'ok': True, 'prompt': _json(row)})
 
 
 async def prompt_activate_api(request):
     uid = auth(request, {'owner'})
     activate_prompt(int(request.match_info['id']), uid)
     log_admin_action(uid, 'prompt_version_activate', details=str(request.match_info['id']))
-    return web.json_response({'ok': True})
+    return j({'ok': True})
 
 
 async def policies_api(request):
     uid = auth(request, {'owner'})
     if request.method == 'GET':
-        return web.json_response({'items': _rows(policies())})
+        return j({'items': _rows(policies())})
     payload = await request.json()
     set_policy(str(payload['key']), str(payload.get('title', payload['key'])), payload.get('config', {}), bool(payload.get('enabled', True)), uid)
     log_admin_action(uid, 'policy_update', details=json.dumps(payload, ensure_ascii=False))
-    return web.json_response({'ok': True})
+    return j({'ok': True})
 
 
 async def incidents_api(request):
     uid = auth(request, {'owner','moderator','analyst'})
-    return web.json_response({'items': _rows(incidents(200, request.query.get('status')))})
+    return j({'items': _rows(incidents(200, request.query.get('status')))})
 
 
 async def incident_create_api(request):
@@ -769,7 +826,7 @@ async def incident_create_api(request):
         rollback_result = await railway_rollback(target)
         record_rollback(iid, str(payload.get('service','unknown')), target, 'success' if rollback_result.get('ok') else 'failed', json.dumps(rollback_result, ensure_ascii=False))
     log_admin_action(uid, 'incident_create', details=json.dumps({**payload, 'rollback': rollback_result}, ensure_ascii=False))
-    return web.json_response({'ok': True, 'incident_id': iid, 'rollback': rollback_result})
+    return j({'ok': True, 'incident_id': iid, 'rollback': rollback_result})
 
 
 async def incident_resolve_api(request):
@@ -777,7 +834,7 @@ async def incident_resolve_api(request):
     payload = await request.json()
     resolve_incident(int(request.match_info['id']), uid, str(payload.get('note','')))
     log_admin_action(uid, 'incident_resolve', details=str(request.match_info['id']))
-    return web.json_response({'ok': True})
+    return j({'ok': True})
 
 
 async def rollback_api(request):
@@ -791,12 +848,12 @@ async def rollback_api(request):
     if incident_id:
         record_rollback(int(incident_id), str(payload.get('service','unknown')), target, 'success' if result.get('ok') else 'failed', json.dumps(result, ensure_ascii=False))
     log_admin_action(uid, 'railway_rollback', details=json.dumps({'target':target,'result':result}, ensure_ascii=False))
-    return web.json_response(result)
+    return j(result)
 
 
 async def shadow_api(request):
     auth(request, {'owner','analyst'})
-    return web.json_response({'items': _rows(shadow_runs(200))})
+    return j({'items': _rows(shadow_runs(200))})
 
 def create_app(bot):
     app=web.Application(middlewares=[rate_limit_middleware, error_middleware])
@@ -854,11 +911,13 @@ def create_app(bot):
     app.router.add_delete('/admin/api/story/{id}/lock', story_unlock_api)
     app.router.add_get('/admin/api/monitoring', monitoring)
     app.router.add_get('/admin/api/employees', employees_api)
+    app.router.add_post('/admin/api/employee', employee_create_api)
     app.router.add_get('/admin/api/employee/{id}', employee_api)
     app.router.add_put('/admin/api/employee/{id}/role', employee_role_api)
     app.router.add_put('/admin/api/employee/{id}/status', employee_status_api)
     app.router.add_put('/admin/api/employee/{id}/permission', employee_permission_api)
     app.router.add_get('/admin/api/lms', lms_api)
+    app.router.add_get('/admin/api/lms/employee/{id}', lms_employee_status_api)
     app.router.add_post('/admin/api/lms/assign', lms_assign_api)
     app.router.add_post('/admin/api/lms/manage', lms_manage_api)
     app.router.add_put('/admin/api/lms/assignment/{id}', lms_update_api)

@@ -3,10 +3,11 @@ from aiogram.types import CallbackQuery
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State,StatesGroup
 from config import ADMIN_IDS,CHANNEL_ID,CHANNEL_USERNAME
-from database import get_story,get_latest_safety_decision,publish_story,reject_story,get_story_reaction_counts,set_story_reaction,get_user_story_reaction,lock_story,is_admin_active,unlock_story,update_story_content,log_admin_action,get_admin_role,record_kpi_event,update_ai_result
+from database import get_story,get_latest_safety_decision,publish_story,reject_story,get_story_reaction_counts,set_story_reaction,get_user_story_reaction,lock_story,is_admin_active,unlock_story,update_story_content,log_admin_action,get_admin_role,record_kpi_event,update_ai_result,get_lms_employee_status,get_lms_assignment_tests,submit_lms_test
 from keyboards import channel_story_keyboard,published_story_keyboard
 from notifications import notify_user
 from ai import analyze_story
+import json
 router=Router()
 callback_router=router
 
@@ -15,7 +16,48 @@ def get_channel_message_link(bot,message_id):
     raw=str(CHANNEL_ID)
     return f'https://t.me/c/{raw[4:]}/{message_id}' if raw.startswith('-100') else None
 
-def allowed(uid): return int(uid) in {int(x) for x in ADMIN_IDS} and is_admin_active(uid)
+def allowed(uid):
+    uid=int(uid)
+    if not is_admin_active(uid): return False
+    if get_admin_role(uid)=='owner': return True
+    try: return bool(get_lms_employee_status(uid).get('complete',False))
+    except Exception: return False
+
+class LmsBotState(StatesGroup): waiting=State()
+
+@router.callback_query(F.data.startswith('lms:start:'))
+async def lms_start_callback(q:CallbackQuery,state:FSMContext):
+    uid=int(q.from_user.id)
+    if not is_admin_active(uid): await q.answer('Нет доступа',show_alert=True); return
+    aid=int(q.data.rsplit(':',1)[1]); tests=get_lms_assignment_tests(aid,uid)
+    if not tests:
+        await q.answer('В этом курсе пока нет тестов',show_alert=True); return
+    await state.update_data(lms_assignment_id=aid,lms_tests=tests,lms_index=0,lms_answers={})
+    await state.set_state(LmsBotState.waiting)
+    t=tests[0]; opts=json.loads(t.get('options') or '[]') if isinstance(t.get('options'),str) else (t.get('options') or [])
+    kb=[[InlineKeyboardButton(text=str(o)[:90],callback_data=f'lms:answer:{int(t["id"])}:{i}')] for i,o in enumerate(opts)]
+    await q.message.answer(f'🎓 <b>{t.get("question")}</b>',reply_markup=InlineKeyboardMarkup(inline_keyboard=kb)); await q.answer()
+
+@router.callback_query(F.data.startswith('lms:answer:'))
+async def lms_answer_callback(q:CallbackQuery,state:FSMContext):
+    uid=int(q.from_user.id)
+    if not is_admin_active(uid): await q.answer('Нет доступа',show_alert=True); return
+    data=await state.get_data(); tests=data.get('lms_tests') or []
+    if not tests: await state.clear(); await q.answer('Сессия обучения устарела',show_alert=True); return
+    qid=int(q.data.split(':')[2]); oi=int(q.data.split(':')[3]); idx=int(data.get('lms_index',0))
+    test=next((x for x in tests if int(x['id'])==qid),None)
+    if not test: await q.answer('Вопрос не найден',show_alert=True); return
+    opts=json.loads(test.get('options') or '[]') if isinstance(test.get('options'),str) else (test.get('options') or [])
+    answer=str(opts[oi]) if 0 <= oi < len(opts) else ''
+    answers=dict(data.get('lms_answers') or {}); answers[str(qid)]=answer; idx+=1
+    if idx >= len(tests):
+        result=submit_lms_test(int(data['lms_assignment_id']),answers,uid); await state.clear()
+        await q.message.answer(f"🎓 <b>Тест завершён</b>\n\nРезультат: <b>{result['score']}%</b>\nСтатус: {'✅ обучение пройдено' if result['passed'] else '❌ нужно повторить'}")
+        await q.answer('Готово'); return
+    await state.update_data(lms_index=idx,lms_answers=answers)
+    t=tests[idx]; opts=json.loads(t.get('options') or '[]') if isinstance(t.get('options'),str) else (t.get('options') or [])
+    kb=[[InlineKeyboardButton(text=str(o)[:90],callback_data=f'lms:answer:{int(t["id"])}:{i}')] for i,o in enumerate(opts)]
+    await q.message.answer(f'🎓 <b>Вопрос {idx+1}/{len(tests)}</b>\n\n{t.get("question")}',reply_markup=InlineKeyboardMarkup(inline_keyboard=kb)); await q.answer()
 
 @router.callback_query(F.data.startswith('story:publish:'))
 async def publish_callback(q:CallbackQuery):
@@ -25,7 +67,20 @@ async def publish_callback(q:CallbackQuery):
     try:
         safety=get_latest_safety_decision(sid); role=get_admin_role(q.from_user.id)
         if safety and safety.get('recommendation')!='publish' and role!='owner': await q.answer('Нужна ручная safety-проверка. Владелец может сделать override.',show_alert=True); return
-        sent=await q.bot.send_message(CHANNEL_ID,story['post_text'] or story['text'])
+        post_text=story['post_text'] or story['text']
+        sent=None; errors=[]
+        targets=[]
+        if CHANNEL_USERNAME:
+            targets.append('@'+CHANNEL_USERNAME.lstrip('@'))
+        targets.append(CHANNEL_ID)
+        for target in targets:
+            try:
+                sent=await q.bot.send_message(target,post_text)
+                break
+            except Exception as exc:
+                errors.append(f'{target}: {exc}')
+        if sent is None:
+            raise RuntimeError('Не удалось найти/достичь канал. Проверь CHANNEL_ID/CHANNEL_USERNAME и права Moderator Bot администратора канала. ' + ' | '.join(errors))
         publish_story(sid,sent.message_id); link=get_channel_message_link(q.bot,sent.message_id); counts=get_story_reaction_counts(sid)
         if link: await sent.edit_reply_markup(reply_markup=channel_story_keyboard(sid,link,counts))
         record_kpi_event(q.from_user.id,'publish'); await q.answer('Опубликовано')

@@ -906,20 +906,32 @@ def ensure_admin_roles(admin_ids):
 
 
 def get_admin_role(user_id: int) -> str:
+    """Return the effective role. The first ADMIN_IDS entry is always the owner."""
+    uid = int(user_id)
+    configured = [int(x.strip()) for x in os.getenv("ADMIN_IDS", "").split(",") if x.strip()]
+    if configured and uid == configured[0]:
+        return "owner"
     connection = get_connection()
-    row = connection.execute("SELECT role FROM admin_roles WHERE user_id = ?", (user_id,)).fetchone()
-    connection.close()
-    return row["role"] if row else "moderator"
+    try:
+        row = connection.execute("SELECT role FROM admin_roles WHERE user_id = ?", (uid,)).fetchone()
+        return row["role"] if row and row["role"] else "moderator"
+    finally:
+        connection.close()
 
 
 def is_admin_active(user_id: int) -> bool:
-    """Return False immediately for fired/deactivated staff."""
-    if int(user_id) not in {int(x) for x in os.getenv("ADMIN_IDS", "").split(",") if x.strip()}:
-        return False
+    """Return True for an active configured/admin_roles employee."""
+    uid = int(user_id)
+    configured = {int(x.strip()) for x in os.getenv("ADMIN_IDS", "").split(",") if x.strip()}
     con = get_connection()
-    row = con.execute("SELECT status FROM employee_profiles WHERE admin_id=?", (int(user_id),)).fetchone()
-    con.close()
-    return not row or row["status"] != "fired"
+    try:
+        row = con.execute("SELECT status FROM employee_profiles WHERE admin_id=?", (uid,)).fetchone()
+        role_row = con.execute("SELECT role FROM admin_roles WHERE user_id=?", (uid,)).fetchone()
+        if row and row["status"] == "fired":
+            return False
+        return uid in configured or bool(role_row)
+    finally:
+        con.close()
 
 
 def set_admin_role(user_id: int, role: str):
@@ -1655,15 +1667,74 @@ def ensure_platform_defaults():
     for key in ('analysis', 'moderation', 'quality', 'structured_moderation'):
         con.execute('INSERT OR IGNORE INTO ai_checks(key,enabled) VALUES(?,1)', (key,))
     admin_ids = [int(x.strip()) for x in os.getenv("ADMIN_IDS", "").split(",") if x.strip()]
-    for admin_id in admin_ids:
+    for idx, admin_id in enumerate(admin_ids):
+        # Bootstrap configured admins into staff tables. The first ID is the owner.
         con.execute(
             """
             INSERT INTO employee_profiles(admin_id,position,status,work_started_at)
-            VALUES(?, 'moderator', 'employee', CURRENT_TIMESTAMP)
+            VALUES(?, ?, 'employee', CURRENT_TIMESTAMP)
             ON CONFLICT(admin_id) DO NOTHING
             """,
-            (admin_id,),
+            (admin_id, 'owner' if idx == 0 else 'moderator'),
         )
+        con.execute(
+            """
+            INSERT INTO admin_roles(user_id,role) VALUES(?,?)
+            ON CONFLICT(user_id) DO UPDATE SET role=CASE WHEN ?=1 THEN 'owner' ELSE admin_roles.role END, updated_at=CURRENT_TIMESTAMP
+            """,
+            (admin_id, 'owner' if idx == 0 else 'moderator', 1 if idx == 0 else 0),
+        )
+
+    # Create one idempotent mandatory onboarding course if the LMS is empty.
+    # Every non-owner employee receives it automatically below.
+    course = con.execute("SELECT id FROM lms_courses WHERE title='ProblemNet — Обязательное вводное обучение' LIMIT 1").fetchone()
+    if not course:
+        cur = con.execute(
+            """INSERT INTO lms_courses(title,position,required,required_for_permission,deadline_days,active)
+               VALUES(?,NULL,true,NULL,7,true) RETURNING id""",
+            ('ProblemNet — Обязательное вводное обучение',),
+        )
+        course_id = int(cur.fetchone()[0])
+        cur = con.execute(
+            """INSERT INTO lms_lessons(course_id,title,content,position) VALUES(?,?,?,0) RETURNING id""",
+            (course_id, 'Основы работы с ProblemNet',
+             'Обязательное вводное обучение: анонимность пользователей, правила модерации, AI-проверки, эскалация опасных случаев, поддержка и защита персональных данных.'),
+        )
+        lesson_id = int(cur.fetchone()[0])
+        con.execute(
+            """INSERT INTO lms_tests(lesson_id,question,options,correct_answer,points) VALUES(?,?,?,?,1)""",
+            (lesson_id, 'Что является правильным правилом работы с историями пользователей?',
+             json.dumps(['Публиковать личные данные','Сохранять анонимность и соблюдать правила модерации','Игнорировать AI safety'], ensure_ascii=False),
+             'Сохранять анонимность и соблюдать правила модерации'),
+        )
+    else:
+        course_id = int(course['id'])
+
+    for admin_id in admin_ids:
+        if admin_ids and admin_id == admin_ids[0]:
+            continue
+        con.execute(
+            """INSERT INTO lms_assignments(admin_id,course_id,due_at)
+               VALUES(?,?,CURRENT_TIMESTAMP + INTERVAL '7 days')
+               ON CONFLICT(admin_id,course_id) DO NOTHING""",
+            (admin_id, course_id),
+        )
+        # Legacy LMS view used by older bot screens.
+        con.execute(
+            """INSERT INTO employee_training(admin_id,course,lesson,due_at)
+               SELECT ?, c.title, 'Основы работы с ProblemNet', CURRENT_TIMESTAMP + INTERVAL '7 days'
+               FROM lms_courses c WHERE c.id=?
+               AND NOT EXISTS (SELECT 1 FROM employee_training et WHERE et.admin_id=? AND et.course=c.title)""",
+            (admin_id, course_id, admin_id),
+        )
+
+    # Any employee added from the Founder/Mini App/Moderator Bot also receives required LMS automatically.
+    staff_rows = con.execute("SELECT admin_id FROM employee_profiles WHERE status <> 'fired'").fetchall()
+    for row in staff_rows:
+        staff_id=int(row['admin_id'])
+        if admin_ids and staff_id == admin_ids[0]:
+            continue
+        con.execute("INSERT INTO lms_assignments(admin_id,course_id,due_at) SELECT ?,id,CURRENT_TIMESTAMP + (COALESCE(deadline_days,7)::int * INTERVAL '1 day') FROM lms_courses WHERE active=true AND required=true ON CONFLICT(admin_id,course_id) DO NOTHING",(staff_id,))
 
     # Keep the DB registry aligned with the models explicitly configured in Railway.
     configured_models = [x.strip() for x in os.getenv('GROQ_MODELS', '').split(',') if x.strip()]
@@ -2211,6 +2282,97 @@ def get_kpi_dashboard(days=30):
     finally:
         con.close()
 
+
+
+def create_lms_course(title, position=None, required=True, deadline_days=7, lesson_title=None, lesson_content=None, question=None, options=None, correct_answer=None):
+    con=get_connection()
+    try:
+        cur=con.execute("INSERT INTO lms_courses(title,position,required,required_for_permission,deadline_days,active) VALUES(?,?,?,NULL,?,true) RETURNING id",(str(title)[:300],position,bool(required),int(deadline_days)))
+        course_id=int(cur.fetchone()[0])
+        lt=lesson_title or 'Вводный урок'
+        lc=lesson_content or 'Изучите правила и материалы курса.'
+        cur=con.execute("INSERT INTO lms_lessons(course_id,title,content,position) VALUES(?,?,?,0) RETURNING id",(course_id,lt[:300],lc[:20000]))
+        lesson_id=int(cur.fetchone()[0])
+        if question:
+            opts=options or []
+            con.execute("INSERT INTO lms_tests(lesson_id,question,options,correct_answer,points) VALUES(?,?,?,?,1)",(lesson_id,str(question)[:5000],json.dumps(opts,ensure_ascii=False),str(correct_answer or '')[:1000]))
+        con.commit(); return {'course_id':course_id,'lesson_id':lesson_id}
+    finally: con.close()
+
+
+def assign_course_to_employee(admin_id, course_id, due_at=None):
+    con=get_connection()
+    try:
+        if due_at:
+            con.execute("INSERT INTO lms_assignments(admin_id,course_id,due_at) VALUES(?,?,?) ON CONFLICT(admin_id,course_id) DO UPDATE SET due_at=EXCLUDED.due_at",(int(admin_id),int(course_id),due_at))
+        else:
+            con.execute("INSERT INTO lms_assignments(admin_id,course_id,due_at) SELECT ?,id,CURRENT_TIMESTAMP + (COALESCE(deadline_days,7)::int * INTERVAL '1 day') FROM lms_courses WHERE id=? ON CONFLICT(admin_id,course_id) DO NOTHING",(int(admin_id),int(course_id)))
+        con.commit()
+    finally: con.close()
+
+
+def get_lms_assignment_tests(assignment_id, admin_id):
+    con=get_connection()
+    try:
+        assignment=con.execute("SELECT * FROM lms_assignments WHERE id=? AND admin_id=?",(int(assignment_id),int(admin_id))).fetchone()
+        if not assignment: return []
+        rows=con.execute("""SELECT t.* FROM lms_tests t JOIN lms_lessons l ON l.id=t.lesson_id
+                           WHERE l.course_id=? ORDER BY l.position,t.id""",(int(assignment['course_id']),)).fetchall()
+        return [dict(r) for r in rows]
+    finally: con.close()
+
+
+def get_lms_employee_status(admin_id):
+    """Return mandatory LMS status for one employee. Owner is exempt."""
+    uid = int(admin_id)
+    if get_admin_role(uid) == 'owner':
+        return {'exempt': True, 'complete': True, 'required': [], 'pending': []}
+    con = get_connection()
+    try:
+        rows = con.execute(
+            """SELECT c.id,c.title,c.deadline_days,a.id AS assignment_id,
+                      COALESCE(a.status,'assigned') AS status,COALESCE(a.progress,0) AS progress,
+                      a.due_at,a.completed_at
+               FROM lms_courses c LEFT JOIN lms_assignments a
+                 ON a.course_id=c.id AND a.admin_id=?
+              WHERE c.active=true AND c.required=true
+              ORDER BY c.id""", (uid,)
+        ).fetchall()
+        required=[dict(r) for r in rows]
+        pending=[r for r in required if r['status']!='completed']
+        return {'exempt': False, 'complete': not pending, 'required': required, 'pending': pending}
+    finally:
+        con.close()
+
+
+def assign_required_lms_for_employee(admin_id):
+    uid=int(admin_id)
+    if get_admin_role(uid)=='owner':
+        return []
+    con=get_connection()
+    try:
+        rows=con.execute("SELECT id,title,deadline_days FROM lms_courses WHERE active=true AND required=true ORDER BY id").fetchall()
+        out=[]
+        for c in rows:
+            con.execute("INSERT INTO lms_assignments(admin_id,course_id,due_at) VALUES(?,?,CURRENT_TIMESTAMP + (?::int * INTERVAL '1 day')) ON CONFLICT(admin_id,course_id) DO NOTHING", (uid,int(c['id']),int(c['deadline_days'] or 7)))
+            out.append(dict(c))
+        con.commit(); return out
+    finally:
+        con.close()
+
+
+def get_lms_progress(admin_id=None):
+    con=get_connection()
+    try:
+        where='' if admin_id is None else ' WHERE a.admin_id=?'
+        params=() if admin_id is None else (int(admin_id),)
+        rows=con.execute(
+            """SELECT a.admin_id,c.id AS course_id,c.title,c.required,a.id AS assignment_id,a.status,a.progress,a.due_at,a.completed_at
+               FROM lms_assignments a JOIN lms_courses c ON c.id=a.course_id"""+where+" ORDER BY a.admin_id,c.id", params
+        ).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        con.close()
 
 
 def get_lms_full():

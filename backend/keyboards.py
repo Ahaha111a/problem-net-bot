@@ -26,6 +26,7 @@ def admin_keyboard():
         [KeyboardButton(text='💬 Поддержка'),KeyboardButton(text='📈 KPI')],
         [KeyboardButton(text='🖥 Мониторинг'),KeyboardButton(text='🤖 AI Control')],
         [KeyboardButton(text='👥 Сотрудники'),KeyboardButton(text='🎓 Обучение')],
+        [KeyboardButton(text='➕ Добавить сотрудника')],
         [KeyboardButton(text='👑 Founder Center')],
         [KeyboardButton(text='📁 Все истории')],
     ]

@@ -1,10 +1,22 @@
-from database import get_connection, get_admin_role, set_admin_role, log_admin_action
+from database import get_connection, get_admin_role, set_admin_role, log_admin_action, assign_required_lms_for_employee, create_lms_course, assign_course_to_employee
 
 def ensure_employee(admin_id, full_name=None, position=None, status=None):
  c=get_connection(); r=c.execute("SELECT admin_id FROM employee_profiles WHERE admin_id=?",(admin_id,)).fetchone()
  if not r: c.execute("INSERT INTO employee_profiles(admin_id,full_name,position,status,work_started_at) VALUES(?,?,?,?,CURRENT_TIMESTAMP)",(admin_id,full_name,position or 'moderator',status or 'trainee'))
  else: c.execute("UPDATE employee_profiles SET full_name=COALESCE(?,full_name),position=COALESCE(?,position),status=COALESCE(?,status),updated_at=CURRENT_TIMESTAMP WHERE admin_id=?",(full_name,position,status,admin_id))
  c.commit(); c.close()
+ assign_required_lms_for_employee(int(admin_id))
+
+def add_employee(admin_id, full_name, role='moderator', position=None, changed_by=None):
+ uid=int(admin_id)
+ if role not in {'moderator','support','analyst','editor'}: raise ValueError('Недопустимая роль')
+ ensure_employee(uid, full_name=full_name, position=position or role, status='trainee')
+ set_admin_role(uid, role)
+ if changed_by is not None:
+  c=get_connection(); c.execute("INSERT INTO employee_role_history(admin_id,old_role,new_role,changed_by,reason) VALUES(?,?,?,?,?)",(uid,None,role,int(changed_by),'Добавлен через панель Moderator Bot')); c.commit(); c.close()
+  log_admin_action(int(changed_by),'employee_add',user_id=uid,details=f'role={role}')
+ return employee(uid)
+
 def employees():
  c=get_connection(); r=c.execute("SELECT p.*,r.role FROM employee_profiles p LEFT JOIN admin_roles r ON r.user_id=p.admin_id ORDER BY p.admin_id").fetchall(); c.close(); return r
 def employee(admin_id):

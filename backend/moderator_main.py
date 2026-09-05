@@ -8,7 +8,7 @@ from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 
-from config import MODERATOR_BOT_TOKEN, BOT_TOKEN, CHANNEL_ID, ADMIN_IDS, TIMEZONE, DATABASE_URL, REDIS_URL
+from config import MODERATOR_BOT_TOKEN, BOT_TOKEN, CHANNEL_ID, CHANNEL_USERNAME, ADMIN_IDS, TIMEZONE, DATABASE_URL, REDIS_URL
 from database import (
     init_db, ensure_platform_defaults, get_due_notification_users, mark_notification_sent,
     get_due_scheduled_stories, claim_scheduled_story, release_scheduled_story, publish_story,
@@ -47,7 +47,15 @@ async def publish_scheduled(bot, story):
             return
         text=(story['post_text'] or '').strip()
         if not text: raise RuntimeError('Пустой пост')
-        sent=await bot.send_message(CHANNEL_ID,text,reply_markup=channel_story_keyboard(sid))
+        sent=None; errors=[]
+        targets=(['@'+CHANNEL_USERNAME.lstrip('@')] if CHANNEL_USERNAME else [])+[CHANNEL_ID]
+        for target in targets:
+            try:
+                sent=await bot.send_message(target,text,reply_markup=channel_story_keyboard(sid)); break
+            except Exception as exc:
+                errors.append(f'{target}: {exc}')
+        if sent is None:
+            raise RuntimeError('Канал недоступен: ' + ' | '.join(errors))
         publish_story(sid,sent.message_id)
         link=get_channel_message_link(bot,sent.message_id)
         if link:

@@ -3,9 +3,9 @@ from aiogram.types import Message,ReplyKeyboardRemove,CallbackQuery,InlineKeyboa
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State,StatesGroup
 from config import ADMIN_IDS
-from database import is_admin_active,get_admin_role,get_stats,get_all_stories,get_waiting_stories,get_story,get_open_dialogs,get_dialog,get_moderator_performance,get_system_health,get_system_errors,get_ai_model_configs,get_ai_model_health,get_ai_priority_queue,get_lms_full,get_extended_stats,get_kpi_dashboard,get_all_settings,get_ai_checks
+from database import is_admin_active,get_admin_role,get_stats,get_all_stories,get_waiting_stories,get_story,get_open_dialogs,get_dialog,get_moderator_performance,get_system_health,get_system_errors,get_ai_model_configs,get_ai_model_health,get_ai_priority_queue,get_lms_full,get_extended_stats,get_kpi_dashboard,get_all_settings,get_ai_checks,get_lms_employee_status,assign_required_lms_for_employee,create_lms_course,assign_course_to_employee
 from keyboards import admin_keyboard,moderation_keyboard
-from staff_ops import employees, employee, permissions, role_history, promotion_history, violations, courses, assignments, change_role, set_status, set_permission
+from staff_ops import employees, employee, permissions, role_history, promotion_history, violations, courses, assignments, change_role, set_status, set_permission, add_employee
 from notifications import notify_user
 router=Router()
 
@@ -101,6 +101,70 @@ async def ai_control(message:Message):
     if not is_admin(message.from_user.id): return
     models=get_ai_model_configs(); health=get_ai_model_health(30); q=get_ai_priority_queue(20); await message.answer('🤖 <b>AI Control Center</b>\n\n'+('\n'.join(f"• {m['model']} — {'🟢' if m['enabled'] else '⚪'} priority={m['priority']}" for m in models[:15]) or 'Модели не настроены.')+f'\n\nОчередь: {len(q)}\nHealth: {len(health)}')
 
+class AddEmployeeState(StatesGroup): waiting=State()
+
+@router.message(F.text=='➕ Добавить сотрудника')
+async def add_employee_start(message:Message,state:FSMContext):
+    if not is_admin(message.from_user.id) or get_admin_role(message.from_user.id)!='owner':
+        return
+    await state.set_state(AddEmployeeState.waiting)
+    await message.answer('➕ Отправьте данные нового сотрудника одной строкой:\n<code>TELEGRAM_ID | Имя | роль</code>\n\nРоли: moderator, support, analyst, editor')
+
+@router.message(AddEmployeeState.waiting)
+async def add_employee_receive(message:Message,state:FSMContext):
+    if not is_admin(message.from_user.id) or get_admin_role(message.from_user.id)!='owner':
+        await state.clear(); return
+    raw=(message.text or '').strip()
+    parts=[x.strip() for x in raw.split('|')]
+    if len(parts)<2:
+        await message.answer('❗ Формат: TELEGRAM_ID | Имя | роль'); return
+    try: target=int(parts[0])
+    except ValueError:
+        await message.answer('❗ Telegram ID должен быть числом.'); return
+    name=parts[1][:200]; role=(parts[2] if len(parts)>2 and parts[2] else 'moderator')
+    try:
+        e=add_employee(target,name,role,role,message.from_user.id)
+        lms=get_lms_employee_status(target)
+        lms_label = 'пройдено' if lms['complete'] else 'назначено'
+        await message.answer(f'✅ Сотрудник добавлен.\n\nID: {target}\nИмя: {name}\nРоль: {role}\n\n🎓 Обязательное обучение: {lms_label}.')
+    except Exception as exc:
+        await message.answer(f'❌ Не удалось добавить сотрудника: {exc}')
+    await state.clear()
+
+class LmsCreateState(StatesGroup): waiting=State()
+class LmsAssignState(StatesGroup): waiting=State()
+
+@router.callback_query(F.data=='lms:manage:create')
+async def lms_create_start(q:CallbackQuery,state:FSMContext):
+    if not is_admin(q.from_user.id) or get_admin_role(q.from_user.id)!='owner': await q.answer('Только владелец',show_alert=True); return
+    await state.set_state(LmsCreateState.waiting); await state.update_data(step=1); await q.message.answer('🎓 Создание курса.\n\nШаг 1/4: название курса.'); await q.answer()
+
+@router.message(LmsCreateState.waiting)
+async def lms_create_receive(message:Message,state:FSMContext):
+    if not is_admin(message.from_user.id) or get_admin_role(message.from_user.id)!='owner': await state.clear(); return
+    d=await state.get_data(); step=int(d.get('step',1)); text=(message.text or '').strip()
+    if not text: await message.answer('❗ Отправьте текст.'); return
+    if step==1: await state.update_data(title=text); await state.update_data(step=2); await message.answer('Шаг 2/4: текст урока.'); return
+    if step==2: await state.update_data(content=text); await state.update_data(step=3); await message.answer('Шаг 3/4: вопрос теста.'); return
+    if step==3: await state.update_data(question=text); await state.update_data(step=4); await message.answer('Шаг 4/4: варианты через | и затем правильный вариант.\nПример: Да | Нет | Да'); return
+    parts=[x.strip() for x in text.split('|') if x.strip()]
+    if len(parts)<2: await message.answer('❗ Нужно минимум 2 варианта через |.'); return
+    d=await state.get_data(); correct=parts[0]
+    result=create_lms_course(d['title'],required=True,deadline_days=7,lesson_title='Урок 1',lesson_content=d['content'],question=d['question'],options=parts,correct_answer=correct)
+    await state.clear(); await message.answer(f"✅ Курс создан. ID: {result['course_id']}\n\nПравильный ответ теста: {correct}.\nКурс автоматически обязателен для всех сотрудников кроме владельца.")
+
+@router.callback_query(F.data.startswith('lms:assign:'))
+async def lms_assign_start(q:CallbackQuery,state:FSMContext):
+    if not is_admin(q.from_user.id) or get_admin_role(q.from_user.id)!='owner': await q.answer('Только владелец',show_alert=True); return
+    cid=int(q.data.rsplit(':',1)[1]); await state.set_state(LmsAssignState.waiting); await state.update_data(course_id=cid); await q.message.answer(f'📌 Назначение курса #{cid}. Отправьте Telegram ID сотрудника.'); await q.answer()
+
+@router.message(LmsAssignState.waiting)
+async def lms_assign_receive(message:Message,state:FSMContext):
+    if not is_admin(message.from_user.id) or get_admin_role(message.from_user.id)!='owner': await state.clear(); return
+    try: eid=int((message.text or '').strip())
+    except ValueError: await message.answer('❗ Telegram ID должен быть числом.'); return
+    d=await state.get_data(); assign_course_to_employee(eid,int(d['course_id'])); await state.clear(); await message.answer(f'✅ Курс #{d["course_id"]} назначен сотруднику {eid}.')
+
 @router.message(F.text=='👥 Сотрудники')
 async def staff(message:Message):
     if not is_admin(message.from_user.id): return
@@ -115,18 +179,49 @@ async def staff(message:Message):
 @router.message(F.text=='🎓 Обучение')
 async def training(message:Message):
     if not is_admin(message.from_user.id): return
-    d=get_lms_full(); await message.answer(f"🎓 <b>LMS</b>\n\nКурсов: {len(d['courses'])}\nУроков: {len(d['lessons'])}\nТестов: {len(d['tests'])}\nПрактика: {len(d['practical_tasks'])}\nЭкзамены: {len(d['exams'])}\nНазначения: {len(d['assignments'])}\n\nСертификатов нет — они удалены из концепции.")
+    uid=int(message.from_user.id)
+    assign_required_lms_for_employee(uid)
+    own=get_lms_employee_status(uid)
+    if get_admin_role(uid)!='owner':
+        if own['complete']:
+            await message.answer('🎓 <b>Моё обучение</b>\n\n✅ Все обязательные курсы пройдены.')
+            return
+        rows=[]
+        for x in own['pending']:
+            aid=x.get('assignment_id')
+            rows.append([InlineKeyboardButton(text=f'▶️ {x["title"]}',callback_data=f'lms:start:{aid}')])
+        await message.answer('🎓 <b>Моё обязательное обучение</b>\n\nДо получения рабочих разрешений необходимо пройти все назначенные курсы.',reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))
+        return
+    d=get_lms_full(); pending=[]
+    for e in employees():
+        eid=int(e['admin_id'])
+        if get_admin_role(eid)=='owner': continue
+        assign_required_lms_for_employee(eid); st=get_lms_employee_status(eid)
+        pending.append(f"• {eid}: {'✅' if st['complete'] else '⏳ '+str(len(st['pending']))+' курс(ов)'}")
+    kb=[]
+    if get_admin_role(message.from_user.id)=='owner':
+        kb.append([InlineKeyboardButton(text='➕ Создать обязательный курс',callback_data='lms:manage:create')])
+        for c in d['courses'][:20]: kb.append([InlineKeyboardButton(text=f'📌 Назначить: {c["title"][:45]}',callback_data=f'lms:assign:{c["id"]}')])
+    await message.answer(f"🎓 <b>LMS Control</b>\n\nКурсов: {len(d['courses'])}\nУроков: {len(d['lessons'])}\nТестов: {len(d['tests'])}\nПрактика: {len(d['practical_tasks'])}\nЭкзамены: {len(d['exams'])}\n\n<b>Сотрудники:</b>\n"+('\n'.join(pending) if pending else 'Нет сотрудников')+"\n\nОснователь освобождён от обязательного обучения.",reply_markup=InlineKeyboardMarkup(inline_keyboard=kb) if kb else None)
 
 # =========================================================
 # EMPLOYEE ACTIONS (bot fallback for Mini App)
 # =========================================================
+
+@router.callback_query(F.data.startswith('staff:lms:'))
+async def staff_lms_callback(q:CallbackQuery):
+    if not is_admin(q.from_user.id): await q.answer('Нет доступа',show_alert=True); return
+    target=int(q.data.rsplit(':',1)[1]); assign_required_lms_for_employee(target); st=get_lms_employee_status(target)
+    lines=[f'🎓 <b>Обучение сотрудника {target}</b>',f'Статус: {"✅ завершено" if st["complete"] else "⏳ не завершено"}']
+    lines += [f'• {x["title"]}: {x["status"]}, {x["progress"]}%' for x in st['required']]
+    await q.message.answer('\n'.join(lines)); await q.answer()
 
 @router.callback_query(F.data.startswith('staff:role:'))
 async def staff_role_callback(q: CallbackQuery):
     if not is_admin(q.from_user.id) or get_admin_role(q.from_user.id) != 'owner':
         await q.answer('Только владелец', show_alert=True); return
     _, _, target, role = q.data.split(':', 3)
-    if role not in {'owner','moderator','support','analyst','editor'}:
+    if role not in {'moderator','support','analyst','editor'}:
         await q.answer('Недопустимая роль', show_alert=True); return
     change_role(int(target), role, q.from_user.id, 'Из панели Moderator Bot')
     await q.answer(f'Роль: {role}')
@@ -156,7 +251,8 @@ async def staff_view_callback(q: CallbackQuery):
     perms=permissions(target); lines += [f'• {p["permission"]}: {"✅" if p["enabled"] else "❌"}' for p in perms] or ['• нет']
     kb=[]
     if get_admin_role(q.from_user.id)=='owner':
-        kb += [[InlineKeyboardButton(text='👤 Moderator',callback_data=f'staff:role:{target}:moderator'),InlineKeyboardButton(text='💬 Support',callback_data=f'staff:role:{target}:support')],
+        kb += [[InlineKeyboardButton(text='🎓 Обучение',callback_data=f'staff:lms:{target}')],
+               [InlineKeyboardButton(text='👤 Moderator',callback_data=f'staff:role:{target}:moderator'),InlineKeyboardButton(text='💬 Support',callback_data=f'staff:role:{target}:support')],
                [InlineKeyboardButton(text='📊 Analyst',callback_data=f'staff:role:{target}:analyst'),InlineKeyboardButton(text='✏️ Editor',callback_data=f'staff:role:{target}:editor')],
                [InlineKeyboardButton(text='🟢 Employee',callback_data=f'staff:status:{target}:employee'),InlineKeyboardButton(text='⭐ Senior',callback_data=f'staff:status:{target}:senior')],
                [InlineKeyboardButton(text='🚫 Уволить',callback_data=f'staff:status:{target}:fired')]]
