@@ -61,9 +61,18 @@ def _translate_sql(sql: str) -> str:
         re.search(r"\bINSERT\s+INTO\b", sql, flags=re.I)
         and not re.search(r"\bON\s+CONFLICT(?:\s*\(|\s+DO\b)", sql, flags=re.I)
     ):
-        # Only append for INSERT statements. For INSERT ... SELECT this is also
-        # valid PostgreSQL syntax.
-        sql = sql.rstrip().rstrip(";") + " ON CONFLICT DO NOTHING"
+        # PostgreSQL syntax requires ON CONFLICT before RETURNING.
+        # Legacy queries often contain RETURNING id, so appending the clause
+        # to the end produces: RETURNING id ON CONFLICT ..., which is invalid.
+        # Keep the adapter compatible with both forms.
+        statement = sql.rstrip().rstrip(";")
+        returning_match = re.search(r"\s+RETURNING\s+.+$", statement, flags=re.I | re.S)
+        if returning_match:
+            head = statement[:returning_match.start()].rstrip()
+            tail = statement[returning_match.start():]
+            sql = f"{head} ON CONFLICT DO NOTHING {tail}"
+        else:
+            sql = statement + " ON CONFLICT DO NOTHING"
 
     # SQLite AUTOINCREMENT -> PostgreSQL sequence-backed bigint.
     sql = re.sub(r"INTEGER\s+PRIMARY\s+KEY\s+AUTOINCREMENT", "BIGSERIAL PRIMARY KEY", sql, flags=re.I)
