@@ -41,7 +41,7 @@ function err(e){document.getElementById('app').innerHTML=`<div class="card bad">
 async function load(){
  try{
   await waitForTelegram();
-  if(noTelegram()){err(new Error('Не удалось подтвердить запуск. Откройте Mini App кнопкой из Moderator Bot.')) ; return;}
+  if(noTelegram()){err(new Error('Не удалось подтвердить запуск. Откройте Founder Center кнопкой из Moderator Bot.')); return;}
   render(await api('/founder/api'));
  }catch(e){err(e)}
 }

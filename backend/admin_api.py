@@ -117,7 +117,7 @@ def auth(request, allowed=None):
     # is necessary for Telegram clients/launch paths that expose an empty
     # WebApp.initData value.
     init_data = request.headers.get('X-Telegram-Init-Data', '').strip()
-    launch_token = request.headers.get('X-ProblemNet-Launch-Token', '').strip() or request.query.get('launch', '').strip()
+    launch_token = (request.headers.get('X-ProblemNet-Launch-Token', '').strip() or request.query.get('launch', '').strip() or request.cookies.get('pn_launch', '').strip())
     uid = None
     if init_data:
         data = validate_init_data(init_data)
@@ -140,15 +140,17 @@ def auth(request, allowed=None):
         if not role_row:
             raise web.HTTPForbidden(text='Доступ только для сотрудников проекта')
 
-    # The first configured admin is the bootstrap owner even if the roles table
-    # is temporarily unavailable.
-    role = 'owner' if ADMIN_IDS and uid == int(ADMIN_IDS[0]) else 'moderator'
-    try:
-        db_role = get_admin_role(uid)
-        # Bootstrap owner cannot be downgraded by stale DB state.
-        role = 'owner' if ADMIN_IDS and uid == int(ADMIN_IDS[0]) else (db_role or role)
-    except Exception as exc:
-        print(f'⚠️ auth role lookup failed: {type(exc).__name__}: {exc}')
+    # The first configured admin is the bootstrap owner. For the owner we do
+    # not touch PostgreSQL during authentication: a DB hiccup must never make
+    # the Mini App unusable.
+    is_bootstrap_owner = bool(ADMIN_IDS) and uid == int(ADMIN_IDS[0])
+    role = 'owner' if is_bootstrap_owner else 'moderator'
+    if not is_bootstrap_owner:
+        try:
+            db_role = get_admin_role(uid)
+            role = db_role or role
+        except Exception as exc:
+            print(f'⚠️ auth role lookup failed: {type(exc).__name__}: {exc}')
 
     # Mandatory LMS gate: every non-owner staff member must complete all required courses.
     # LMS endpoints remain available so the employee can complete the training.
@@ -185,7 +187,12 @@ def auth(request, allowed=None):
 
 
 async def index(request):
-    return web.FileResponse(WEB_DIR / 'index.html')
+    response = web.FileResponse(WEB_DIR / 'index.html')
+    token = request.query.get('launch', '').strip()
+    if token and verify_miniapp_launch_token(token):
+        response.set_cookie('pn_launch', token, max_age=900, httponly=True, samesite='Lax', secure=True, path='/')
+    response.headers['Cache-Control'] = 'no-store'
+    return response
 
 async def health(request):
     return j({
@@ -242,31 +249,52 @@ async def api_health(request):
     return j({'ok': True, 'user_id': uid, 'timezone': 'Europe/Moscow'})
 
 async def dashboard(request):
+    """Dashboard must remain available even if optional analytics tables are unavailable."""
     uid = auth(request)
 
-    def safe(call, default):
+    def call(fn, default):
         try:
-            return call()
+            value = fn()
+            return default if value is None else value
         except Exception as exc:
             print(f'⚠️ dashboard metric failed: {type(exc).__name__}: {exc}')
             return default
 
-    stats = safe(get_stats, {'total': 0, 'waiting': 0, 'published': 0, 'rejected': 0})
-    stats['users'] = safe(get_user_count, 0)
-    stats['support'] = safe(get_support_stats, {'open': 0, 'new': 0, 'in_progress': 0})
-    role = safe(lambda: get_admin_role(uid), 'owner' if ADMIN_IDS and uid == int(ADMIN_IDS[0]) else 'moderator')
-    return j({
-        'ok': True,
-        'me': {'id': uid, 'role': role},
-        'timezone': 'Europe/Moscow',
-        'stats': stats,
-        'analytics': safe(get_analytics, {}),
-        'complaints': _rows(safe(lambda: get_complaints('new', 20), [])),
-        'sla_breaches': _rows(safe(get_sla_breaches, [])),
-        'notifications': _rows(safe(lambda: get_admin_notifications(uid, False, 20), [])),
-        'top_stories': _rows(safe(lambda: get_top_stories(10), [])),
-        'retention': _json(safe(get_user_retention, {})),
-    })
+    try:
+        stats = call(get_stats, {'total': 0, 'waiting': 0, 'published': 0, 'rejected': 0})
+        if not isinstance(stats, dict):
+            stats = {'total': 0, 'waiting': 0, 'published': 0, 'rejected': 0}
+        stats['users'] = call(get_user_count, 0)
+        stats['support'] = call(get_support_stats, {'open': 0, 'new': 0, 'in_progress': 0})
+        analytics = call(get_analytics, {})
+        complaints = call(lambda: get_complaints('new', 20), [])
+        sla_breaches = call(get_sla_breaches, [])
+        notifications = call(lambda: get_admin_notifications(uid, False, 20), [])
+        top_stories = call(lambda: get_top_stories(10), [])
+        retention = call(get_user_retention, {})
+        role = 'owner' if ADMIN_IDS and uid == int(ADMIN_IDS[0]) else call(lambda: get_admin_role(uid), 'moderator')
+        return j({
+            'ok': True,
+            'me': {'id': uid, 'role': role},
+            'timezone': 'Europe/Moscow',
+            'stats': _json(stats),
+            'analytics': _json(analytics),
+            'complaints': _rows(complaints),
+            'sla_breaches': _rows(sla_breaches),
+            'notifications': _rows(notifications),
+            'top_stories': _rows(top_stories),
+            'retention': _json(retention),
+        })
+    except Exception as exc:
+        # Last-resort response: never turn the initial Mini App load into 500.
+        traceback.print_exc()
+        role = 'owner' if ADMIN_IDS and uid == int(ADMIN_IDS[0]) else 'moderator'
+        return j({'ok': True, 'degraded': True, 'me': {'id': uid, 'role': role},
+                  'timezone': 'Europe/Moscow',
+                  'stats': {'total': 0, 'waiting': 0, 'published': 0, 'rejected': 0, 'users': 0,
+                            'support': {'open': 0, 'new': 0, 'in_progress': 0}},
+                  'analytics': {}, 'complaints': [], 'sla_breaches': [], 'notifications': [],
+                  'top_stories': [], 'retention': {}, 'warning': str(exc)})
 
 async def stories(request):
     auth(request)
@@ -635,36 +663,71 @@ async def leaderboard_api(request):
 
 
 async def founder_page(request):
-    # The HTML shell is intentionally public. Telegram initData is available to
-    # JavaScript inside Telegram, not as a header on the initial document GET.
-    # Authorization is enforced by /founder/api after the shell loads.
-    return web.FileResponse(WEB_DIR / 'founder.html')
+    response = web.FileResponse(WEB_DIR / 'founder.html')
+    token = request.query.get('launch', '').strip()
+    if token and verify_miniapp_launch_token(token):
+        response.set_cookie('pn_launch', token, max_age=900, httponly=True, samesite='Lax', secure=True, path='/')
+    response.headers['Cache-Control'] = 'no-store'
+    return response
 
 
 async def founder_api(request):
-    uid=auth(request, {'owner'})
+    uid = auth(request, {'owner'})
     import asyncio
-    async def safe(label,fn,default):
-        try: return await asyncio.wait_for(asyncio.to_thread(fn),timeout=10)
+    async def safe(label, fn, default):
+        try:
+            return await asyncio.wait_for(asyncio.to_thread(fn), timeout=8)
         except Exception as exc:
             print(f'⚠️ Founder {label} failed: {type(exc).__name__}: {exc}')
             return default
-    dashboard_data=await safe('dashboard',founder_dashboard,{'stats':{},'hourly_load':[],'publications':[],'users':[],'active_moderators':0,'average_wait_seconds':0})
-    ai_models=await safe('ai_models',get_ai_model_configs,[]); ai_health=await safe('ai_health',get_ai_model_health,[])
-    deployments=await safe('deployments',lambda:get_deployment_events(50),[]); safety=await safe('safety',lambda:get_ai_safety_events(limit=50),[])
-    settings=await safe('settings',get_all_settings,[]); ai_checks=await safe('ai_checks',get_ai_checks,[])
-    ops_data={
-      'workload':await safe('workload',workload,[]),'sla':await safe('sla',sla_dashboard,{'summary':{},'by_priority':[]}),
-      'prompts':await safe('prompts',prompts,[]),'policies':await safe('policies',policies,[]),
-      'incidents':await safe('incidents',lambda:incidents(100),[]),'shadow':await safe('shadow',lambda:shadow_runs(100),[])}
-    redis_status={'status':'offline'}; url=os.getenv('REDIS_URL','').strip()
-    if url:
-        try:
-            from redis.asyncio import Redis
-            r=Redis.from_url(url,decode_responses=True,socket_connect_timeout=3,socket_timeout=3); await r.ping(); q=os.getenv('AI_QUEUE_NAME','problem-net:ai')
-            redis_status={'status':'online','queue_length':await r.xlen(q),'worker_heartbeats':len(await r.keys(f'{q}:worker:*:heartbeat'))}; await r.aclose()
-        except Exception as exc: redis_status={'status':'error','details':str(exc)}
-    return j({'ok':True,'founder_id':uid,'dashboard':dashboard_data,'ai_models':_rows(ai_models),'ai_health':_rows(ai_health),'deployments':_rows(deployments),'safety':_rows(safety),'settings':_rows(settings),'ai_checks':_rows(ai_checks),'redis':redis_status,'ops':{'workload':_rows(ops_data['workload']),'sla':ops_data['sla'],'prompts':_rows(ops_data['prompts']),'policies':_rows(ops_data['policies']),'incidents':_rows(ops_data['incidents']),'shadow':_rows(ops_data['shadow'])}})
+
+    defaults = {
+        'stats': {}, 'hourly_load': [], 'publications': [], 'users': [],
+        'active_moderators': 0, 'average_wait_seconds': 0,
+    }
+    try:
+        dashboard_data = await safe('dashboard', founder_dashboard, defaults)
+        ai_models = await safe('ai_models', get_ai_model_configs, [])
+        ai_health = await safe('ai_health', get_ai_model_health, [])
+        deployments = await safe('deployments', lambda: get_deployment_events(50), [])
+        safety = await safe('safety', lambda: get_ai_safety_events(limit=50), [])
+        settings = await safe('settings', get_all_settings, [])
+        ai_checks = await safe('ai_checks', get_ai_checks, [])
+        ops_data = {
+            'workload': await safe('workload', workload, []),
+            'sla': await safe('sla', sla_dashboard, {'summary': {}, 'by_priority': []}),
+            'prompts': await safe('prompts', prompts, []),
+            'policies': await safe('policies', policies, []),
+            'incidents': await safe('incidents', lambda: incidents(100), []),
+            'shadow': await safe('shadow', lambda: shadow_runs(100), []),
+        }
+        redis_status = {'status': 'offline'}
+        url = os.getenv('REDIS_URL', '').strip()
+        if url:
+            try:
+                from redis.asyncio import Redis
+                r = Redis.from_url(url, decode_responses=True, socket_connect_timeout=2, socket_timeout=2)
+                await r.ping()
+                q = os.getenv('AI_QUEUE_NAME', 'problem-net:ai')
+                redis_status = {'status': 'online', 'queue_length': await r.xlen(q)}
+                await r.aclose()
+            except Exception as exc:
+                redis_status = {'status': 'error', 'details': str(exc)}
+        return j({'ok': True, 'founder_id': uid, 'dashboard': _json(dashboard_data),
+                   'ai_models': _rows(ai_models), 'ai_health': _rows(ai_health),
+                   'deployments': _rows(deployments), 'safety': _rows(safety),
+                   'settings': _rows(settings), 'ai_checks': _rows(ai_checks),
+                   'redis': redis_status,
+                   'ops': {'workload': _rows(ops_data['workload']), 'sla': _json(ops_data['sla']),
+                           'prompts': _rows(ops_data['prompts']), 'policies': _rows(ops_data['policies']),
+                           'incidents': _rows(ops_data['incidents']), 'shadow': _rows(ops_data['shadow'])}})
+    except Exception as exc:
+        traceback.print_exc()
+        return j({'ok': True, 'degraded': True, 'founder_id': uid,
+                   'dashboard': defaults, 'ai_models': [], 'ai_health': [], 'deployments': [],
+                   'safety': [], 'settings': [], 'ai_checks': [], 'redis': {'status': 'offline'},
+                   'ops': {'workload': [], 'sla': {'summary': {}, 'by_priority': []}, 'prompts': [],
+                           'policies': [], 'incidents': [], 'shadow': []}, 'warning': str(exc)})
 
 async def ai_control_api(request):
     uid = auth(request, {'owner'})
