@@ -18,7 +18,7 @@ def story_text(s):
 async def start(message:Message,state:FSMContext):
     await state.clear()
     if not is_admin(message.from_user.id): await message.answer('Этот бот предназначен только для сотрудников проекта.'); return
-    await message.answer('🧹',reply_markup=ReplyKeyboardRemove()); await message.answer('🛡 <b>Панель сотрудников ProblemNet</b>\n\nВсе основные операции доступны здесь, даже если Mini App временно недоступен.',reply_markup=admin_keyboard())
+    await message.answer('🧹',reply_markup=ReplyKeyboardRemove()); await message.answer('🛡 <b>Панель сотрудников ProblemNet</b>\n\nВсе основные операции доступны здесь, даже если Mini App временно недоступен.',reply_markup=admin_keyboard(message.from_user.id))
 
 @router.message(F.text=='🖥 Админ-панель')
 async def admin_app(message:Message):

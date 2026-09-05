@@ -4,9 +4,10 @@
 <body><div class="wrap"><h2>👑 Founder Control Center</h2><div id="me" class="muted"></div><div id="app">Загрузка…</div></div>
 <script>
 const tg=window.Telegram?.WebApp;tg?.ready();tg?.expand();
-function initHeaders(){const data=window.Telegram?.WebApp?.initData||'';return {'X-Telegram-Init-Data':data};}
-function noTelegram(){return !window.Telegram?.WebApp || !window.Telegram.WebApp.initData;}
-function waitForTelegram(){return new Promise(resolve=>{let n=0;const t=setInterval(()=>{const d=window.Telegram?.WebApp?.initData||'';if(d||n++>30){clearInterval(t);resolve(d)}},100);});}
+function launchToken(){return new URLSearchParams(location.search).get('launch')||'';}
+function initHeaders(){const data=window.Telegram?.WebApp?.initData||'';const h={'X-Telegram-Init-Data':data};const launch=launchToken();if(launch)h['X-ProblemNet-Launch-Token']=launch;return h;}
+function noTelegram(){return !((window.Telegram?.WebApp?.initData)||launchToken());}
+function waitForTelegram(){return new Promise(resolve=>{let n=0;const t=setInterval(()=>{const d=window.Telegram?.WebApp?.initData||'';if(d||launchToken()||n++>30){clearInterval(t);resolve(d||launchToken())}},100);});}
 
 async function api(path,opt={}){const controller=new AbortController();const timer=setTimeout(()=>controller.abort(),12000);let r;try{r=await fetch(path,{...opt,signal:controller.signal,headers:{...initHeaders(),...(opt.headers||{}),'Content-Type':'application/json'}});const t=await r.text();let d;try{d=JSON.parse(t)}catch{throw Error(t||r.status)}if(!r.ok)throw Error(d.error||d.details||t);return d}catch(e){throw new Error(e.name==='AbortError'?'Сервер не ответил за 12 секунд.':'Сеть: '+e.message)}finally{clearTimeout(timer)}}
 const esc=s=>String(s??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m]));
@@ -40,7 +41,7 @@ function err(e){document.getElementById('app').innerHTML=`<div class="card bad">
 async function load(){
  try{
   await waitForTelegram();
-  if(noTelegram()){err(new Error('Кабинет основателя нужно открывать кнопкой «👑 Кабинет основателя» внутри Telegram.')) ; return;}
+  if(noTelegram()){err(new Error('Не удалось подтвердить запуск. Откройте Mini App кнопкой из Moderator Bot.')) ; return;}
   render(await api('/founder/api'));
  }catch(e){err(e)}
 }

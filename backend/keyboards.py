@@ -1,5 +1,5 @@
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, KeyboardButton, ReplyKeyboardMarkup, WebAppInfo
-from config import ADMIN_MINIAPP_URL, FOUNDER_URL, CHANNEL_ID, CHANNEL_USERNAME, CHANNEL_FIRST_MESSAGE_ID
+from config import ADMIN_MINIAPP_URL, FOUNDER_URL, CHANNEL_ID, CHANNEL_USERNAME, CHANNEL_FIRST_MESSAGE_ID, miniapp_launch_url
 
 def _channel_first_url():
     if CHANNEL_USERNAME:
@@ -17,10 +17,12 @@ def main_keyboard():
         [KeyboardButton(text='🆘 Экстренная поддержка'),KeyboardButton(text='❤️ Поддержка')],
     ],resize_keyboard=True,is_persistent=True)
 
-def admin_keyboard():
+def admin_keyboard(user_id=None):
     rows=[]
-    if ADMIN_MINIAPP_URL: rows.append([KeyboardButton(text='🖥 Админ-панель',web_app=WebAppInfo(url=ADMIN_MINIAPP_URL))])
-    if FOUNDER_URL: rows.append([KeyboardButton(text='👑 Кабинет основателя',web_app=WebAppInfo(url=FOUNDER_URL))])
+    admin_url = miniapp_launch_url(ADMIN_MINIAPP_URL, int(user_id)) if user_id and ADMIN_MINIAPP_URL else ADMIN_MINIAPP_URL
+    founder_url = miniapp_launch_url(FOUNDER_URL, int(user_id)) if user_id and FOUNDER_URL else FOUNDER_URL
+    if admin_url: rows.append([KeyboardButton(text='🖥 Админ-панель',web_app=WebAppInfo(url=admin_url))])
+    if founder_url: rows.append([KeyboardButton(text='👑 Кабинет основателя',web_app=WebAppInfo(url=founder_url))])
     rows += [
         [KeyboardButton(text='⏳ Модерация'),KeyboardButton(text='📊 Статистика')],
         [KeyboardButton(text='💬 Поддержка'),KeyboardButton(text='📈 KPI')],

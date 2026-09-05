@@ -10,7 +10,7 @@ from zoneinfo import ZoneInfo
 
 from aiohttp import web
 
-from config import BOT_TOKEN, MODERATOR_BOT_TOKEN, CHANNEL_ID, ADMIN_IDS
+from config import BOT_TOKEN, MODERATOR_BOT_TOKEN, CHANNEL_ID, ADMIN_IDS, verify_miniapp_launch_token
 from database import (
     get_connection,
     get_all_settings, set_setting, get_ai_checks, set_ai_check, lock_story, get_story_lock, unlock_story,
@@ -111,17 +111,26 @@ def auth(request, allowed=None):
     deliberately best-effort here because the web server can start before Alembic
     finishes or Supabase can have a short network hiccup.
     """
+    # Preferred authentication: Telegram's signed WebApp initData.
+    # Fallback: a short-lived, employee-bound token injected into the
+    # Mini App URL by the Moderator Bot's WebApp keyboard. This fallback
+    # is necessary for Telegram clients/launch paths that expose an empty
+    # WebApp.initData value.
     init_data = request.headers.get('X-Telegram-Init-Data', '').strip()
-    if not init_data:
-        raise web.HTTPUnauthorized(text='Откройте панель из Telegram Mini App: initData отсутствует')
-    data = validate_init_data(init_data)
-    if not data:
-        raise web.HTTPUnauthorized(text='Недействительные данные Telegram initData')
-    user = data.get('user') or {}
-    try:
-        uid = int(user.get('id', 0))
-    except (TypeError, ValueError):
-        uid = 0
+    launch_token = request.headers.get('X-ProblemNet-Launch-Token', '').strip() or request.query.get('launch', '').strip()
+    uid = None
+    if init_data:
+        data = validate_init_data(init_data)
+        if data:
+            user = data.get('user') or {}
+            try:
+                uid = int(user.get('id', 0))
+            except (TypeError, ValueError):
+                uid = 0
+    if not uid:
+        uid = verify_miniapp_launch_token(launch_token)
+    if not uid:
+        raise web.HTTPUnauthorized(text='Не удалось подтвердить запуск Mini App. Откройте его кнопкой из Moderator Bot.')
     configured_ids = {int(x) for x in ADMIN_IDS}
     if uid not in configured_ids:
         try:

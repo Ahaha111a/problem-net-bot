@@ -1,4 +1,8 @@
 import os
+import hmac
+import hashlib
+import time
+from urllib.parse import urlencode, urlsplit, urlunsplit, parse_qsl
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -35,6 +39,50 @@ REDIS_URL = os.getenv("REDIS_URL", "").strip()
 AI_QUEUE_ENABLED = os.getenv("AI_QUEUE_ENABLED", "1").strip() == "1"
 AI_EMERGENCY_DIRECT = os.getenv("AI_EMERGENCY_DIRECT", "1").strip() == "1"
 BACKUP_DIR = os.getenv("BACKUP_DIR", "/app/backups").strip() or "/app/backups"
+
+
+def create_miniapp_launch_token(user_id: int, ttl_seconds: int = 900) -> str:
+    """Create a short-lived signed token for Mini App fallback authentication.
+
+    Telegram normally supplies WebApp.initData. Some clients/launch paths can
+    expose an empty initData value; this token is bound to the employee ID and
+    expires quickly, so the bot button itself remains a secure launch path.
+    """
+    uid = int(user_id)
+    ts = int(time.time())
+    payload = f"{uid}:{ts}:{int(ttl_seconds)}"
+    secret = (MODERATOR_BOT_TOKEN or BOT_TOKEN).encode()
+    sig = hmac.new(secret, payload.encode(), hashlib.sha256).hexdigest()
+    return f"{payload}:{sig}"
+
+
+def verify_miniapp_launch_token(token: str, max_age_seconds: int = 900):
+    try:
+        parts = str(token or '').split(':')
+        if len(parts) != 4:
+            return None
+        uid, ts, ttl, sig = int(parts[0]), int(parts[1]), int(parts[2]), parts[3]
+        now = int(time.time())
+        if ts > now + 30 or now - ts > min(max_age_seconds, max(ttl, 60)):
+            return None
+        payload = f"{uid}:{ts}:{ttl}"
+        secret = (MODERATOR_BOT_TOKEN or BOT_TOKEN).encode()
+        expected = hmac.new(secret, payload.encode(), hashlib.sha256).hexdigest()
+        if not hmac.compare_digest(expected, sig):
+            return None
+        return uid
+    except Exception:
+        return None
+
+
+def miniapp_launch_url(base_url: str, user_id: int) -> str:
+    """Append a short-lived employee-bound launch token to a Mini App URL."""
+    if not base_url:
+        return ''
+    parts = urlsplit(base_url)
+    query = dict(parse_qsl(parts.query, keep_blank_values=True))
+    query['launch'] = create_miniapp_launch_token(user_id)
+    return urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(query), parts.fragment))
 
 _railway_public_domain = os.getenv("RAILWAY_PUBLIC_DOMAIN", "").strip().rstrip("/")
 ADMIN_MINIAPP_URL = os.getenv("ADMIN_MINIAPP_URL", "").strip().rstrip("/")
